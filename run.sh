@@ -1,0 +1,60 @@
+#!/bin/bash
+
+set -e  # Exit on errors
+
+echo -e "🛠️  Starting Docker build..."
+
+SCRIPT_PATH=$(dirname $(realpath "$0"))
+# PROJECT_ROOT=$(dirname "$SCRIPT_PATH")
+PROJECT_ROOT=$SCRIPT_PATH
+
+# Show full build log
+docker build -f docker/Dockerfile $PROJECT_ROOT
+
+# Get the image ID using quiet mode (-q)
+image_id=$(docker build -q -f docker/Dockerfile $PROJECT_ROOT)
+
+echo -e "\n✅ Build complete. Image ID: $image_id"
+echo "🚀 Starting container..."
+
+# Run the container interactively and then remove it
+DOCKER_OPTS="--rm -it \
+    -v $PROJECT_ROOT/rover:/root/ros2_ws/src/rover \
+    -v $PROJECT_ROOT/uros:/root/ros2_ws/src/uros \
+    --privileged \
+    -v /dev/serial/by-id:/dev/serial/by-id \
+    -v /dev/ttyAMA0:/dev/ttyAMA0 \
+    "
+
+# Detect Wayland (Ubuntu 22.04+ etc.)
+if [ "$XDG_SESSION_TYPE" = "wayland" ]; then
+    echo "🌀 Detected Wayland session."
+
+    if [ -n "$XDG_RUNTIME_DIR" ]; then
+        echo "⚙️  Enabling Wayland GUI support for container."
+
+        DOCKER_OPTS="$DOCKER_OPTS \
+            --env XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR \
+            --env WAYLAND_DISPLAY=$WAYLAND_DISPLAY \
+            --volume $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/run/$WAYLAND_DISPLAY \
+            --device /dev/dri"  # Allow hardware acceleration
+    else
+        echo "⚠️  Warning: XDG_RUNTIME_DIR not set. Skipping Wayland GUI setup."
+    fi
+
+# Fallback to X11
+elif [ -n "$DISPLAY" ]; then
+    echo "🖥️  Detected X11 environment. Enabling GUI support for container."
+
+    xhost +local:docker > /dev/null 2>&1 || true
+
+    DOCKER_OPTS="$DOCKER_OPTS \
+        --env DISPLAY=$DISPLAY \
+        --env QT_X11_NO_MITSHM=1 \
+        --volume /tmp/.X11-unix:/tmp/.X11-unix:rw"
+else
+    echo "📟 No GUI session detected. Running in headless mode."
+fi
+
+# Run container
+docker run $DOCKER_OPTS "$image_id" /bin/bash

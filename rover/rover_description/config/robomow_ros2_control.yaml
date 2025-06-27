@@ -1,0 +1,35 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 50
+
+    diff_drive_controller:
+      type: diff_drive_controller/DiffDriveController
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+diff_drive_controller:
+  ros__parameters:
+    # input_topic: "/cmd_vel"
+    left_wheel_names: ["left_wheel_motor_joint"]
+    right_wheel_names: ["right_wheel_motor_joint"]
+    wheel_separation: 0.66  # distance between wheels (meters)
+    wheel_radius: 0.127     # 10 inches / 2 = 0.127m
+    publish_rate: 50.0
+    base_frame_id: base_link
+    odom_frame_id: odom
+    use_stamped_vel: false
+    enable_odom_tf: true
+    cmd_vel_timeout: 0.5
+    open_loop: true # no feedback available
+    publish_limited_velocity: true
+
+hardware:
+  ros__parameters:
+    joints:
+      - name: left_wheel_motor_joint
+        command_interfaces: ["velocity"]
+        state_interfaces: ["position", "velocity"]
+      - name: right_wheel_motor_joint
+        command_interfaces: ["velocity"]
+        state_interfaces: ["position", "velocity"]

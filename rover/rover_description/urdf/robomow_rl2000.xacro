@@ -1,0 +1,235 @@
+<?xml version="1.0"?>
+<robot name="robomow_rl2000" xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <!-- PARAMETRAR -->
+  <xacro:property name="length" value="0.9"/>
+  <xacro:property name="width" value="0.66"/>
+  <xacro:property name="height" value="0.315"/>
+  <xacro:property name="mass" value="23.7"/>
+  <xacro:property name="wheel_radius" value="0.127"/> <!-- 10 tum / 2 i meter -->
+  <xacro:property name="wheel_width" value="0.05"/>
+  <xacro:property name="wheel_pos_x" value="-0.15"/> <!-- 0.3 m från bakände, med mitt i centrum på 0 -->
+  <xacro:property name="wheel_pos_y" value="0.33"/>  <!-- Halv bredd -->
+
+<material name="black">
+  <color rgba="0 0 0 1"/>
+</material>
+<material name="red">
+  <color rgba="1 0 0 1"/>
+</material>
+<material name="green">
+  <color rgba="0 1 0 1"/>
+</material>
+<material name="gray">
+  <color rgba="0.5 0.5 0.5 1"/>
+</material>
+
+<ros2_control name="RobomowSystem" type="system">
+  <hardware>
+	  <plugin>mock_components/GenericSystem</plugin>
+  </hardware>
+  <joint name="left_wheel_motor_joint">
+    <command_interface name="velocity"/>
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+  </joint>
+  <joint name="right_wheel_motor_joint">
+    <command_interface name="velocity"/>
+    <state_interface name="position"/>
+    <state_interface name="velocity"/>
+  </joint>
+</ros2_control>
+
+<!-- BASE LINK -->
+<link name="dummy_root"/>
+<joint name="dummy_root_to_base_link" type="fixed">
+  <parent link="dummy_root"/>
+  <child link="base_link"/>
+  <origin xyz="0 0 0" rpy="0 0 0"/>
+</joint>
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="${length} ${width} ${height}"/>
+      </geometry>
+      <material name="blue">
+        <color rgba="0 0 1 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="${length} ${width} ${height}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="${mass}"/>
+      <inertia 
+        ixx="1.2" ixy="0.0" ixz="0.0"
+        iyy="1.5" iyz="0.0"
+        izz="1.0"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+
+  <!-- HJUL LINKAR -->
+  <xacro:macro name="wheel" params="name">
+    <link name="${name}">
+      <visual>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <material name="black"/>
+      </visual>
+      <collision>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="1.5"/>
+        <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.01"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+      </inertial>
+    </link>
+  </xacro:macro>
+
+  <xacro:wheel name="left_wheel"/>
+  <xacro:wheel name="right_wheel"/>
+
+  <!-- CASTER WHEEL -->
+  <link name="caster_wheel">
+    <visual>
+      <geometry>
+        <cylinder radius="0.05" length="0.05"/>
+      </geometry>
+      <material name="gray"/>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.05" length="0.05"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.005" ixy="0" ixz="0" iyy="0.005" iyz="0" izz="0.005"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </inertial>
+  </link>
+
+  <!-- JOINTS -->
+
+  <!-- Left wheel joint -->
+  <joint name="left_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="left_wheel"/>
+    <origin xyz="${wheel_pos_x} ${wheel_pos_y} ${wheel_radius}" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- Left wheel encoder joint (dummy sensor joint) -->
+  <joint name="left_wheel_encoder_joint" type="fixed">
+    <parent link="left_wheel"/>
+    <child link="left_wheel_encoder"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="left_wheel_encoder">
+    <visual>
+      <geometry>
+        <sphere radius="0.02"/>
+      </geometry>
+      <material name="green"/>
+    </visual>
+  </link>
+
+  <!-- Left wheel motor controller (effort joint) -->
+  <joint name="left_wheel_motor_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="left_wheel_motor"/>
+    <origin xyz="${wheel_pos_x} ${wheel_pos_y} ${wheel_radius}" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <link name="left_wheel_motor">
+    <visual>
+      <geometry>
+        <box size="0.05 0.05 0.05"/>
+      </geometry>
+      <material name="red"/>
+    </visual>
+  </link>
+
+  <!-- Right wheel joint -->
+  <joint name="right_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="right_wheel"/>
+    <origin xyz="${wheel_pos_x} -${wheel_pos_y} ${wheel_radius}" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- Right wheel encoder joint -->
+  <joint name="right_wheel_encoder_joint" type="fixed">
+    <parent link="right_wheel"/>
+    <child link="right_wheel_encoder"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="right_wheel_encoder">
+    <visual>
+      <geometry>
+        <sphere radius="0.02"/>
+      </geometry>
+      <material name="green"/>
+    </visual>
+  </link>
+
+  <!-- Right wheel motor controller -->
+  <joint name="right_wheel_motor_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="right_wheel_motor"/>
+    <origin xyz="${wheel_pos_x} -${wheel_pos_y} ${wheel_radius}" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <link name="right_wheel_motor">
+    <visual>
+      <geometry>
+        <box size="0.05 0.05 0.05"/>
+      </geometry>
+      <material name="red"/>
+    </visual>
+  </link>
+
+  <!-- Caster wheel joint -->
+  <joint name="caster_wheel_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="caster_wheel"/>
+    <origin xyz="${length/2} 0 ${wheel_radius}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- TRANSMISSIONS -->
+  <transmission name="left_wheel_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="left_wheel_motor_joint">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="left_wheel_motor_actuator">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+
+  <transmission name="right_wheel_transmission">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="right_wheel_motor_joint">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="right_wheel_motor_actuator">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+
+</robot>
