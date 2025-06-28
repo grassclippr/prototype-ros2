@@ -1,6 +1,5 @@
-#include "./client.h"
-
 #include <Arduino.h>
+#include "./client.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -71,9 +70,8 @@ void UrosClient::destroy_entities() {
     rclc_support_fini(&support);
 }
 
-void UrosClient::setup() {
-    USBSerial.begin(115200);
-    set_microros_serial_transports(USBSerial);
+void UrosClient::setup(Stream & stream) {
+    set_microros_serial_transports(stream);
 
     xTaskCreate(
         urosTask,
@@ -93,7 +91,7 @@ void UrosClient::urosTask(void *arg) {
 
         static int previous_state = AGENT_DISCONNECTED;
         if (previous_state != self->state) {
-            // printf("State changed: %d -> %d\n", previous_state, state);
+            self->reportNewState(self->state);
             previous_state = self->state;
         }
 
@@ -113,7 +111,7 @@ void UrosClient::urosTask(void *arg) {
 
             case AGENT_CONNECTED:
                 // Check every 200ms if agent is still connected
-                if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) {
+                if (rmw_uros_ping_agent(100, 3) == RMW_RET_OK) {
                     rclc_executor_spin_some(&self->executor, RCL_MS_TO_NS(100));
                 } else {
                     self->state = AGENT_DISCONNECTED;

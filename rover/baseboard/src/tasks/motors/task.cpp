@@ -1,6 +1,6 @@
+#include <Arduino.h>
 #include "./task.h"
 
-#include <Arduino.h>
 
 void MotorControl::setup() {
     xTaskCreate(

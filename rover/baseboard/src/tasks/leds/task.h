@@ -1,7 +1,6 @@
 #ifndef LEDS_TASK_H
 #define LEDS_TASK_H
 
-#include <Arduino.h>
 #include <BlinkControl.h>
 
 #include "../../hardware.h"

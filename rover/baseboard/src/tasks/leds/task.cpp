@@ -1,8 +1,14 @@
+#include <Arduino.h>
 #include "./task.h"
 
 void LedControl::setup() {
     status_led.begin();
     status_led.off();
+
+    pinMode(ERROR_LED, OUTPUT);
+    digitalWrite(ERROR_LED, HIGH);
+    delay(100);
+    digitalWrite(ERROR_LED, LOW);
 
     xTaskCreate(
         task,

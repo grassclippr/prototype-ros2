@@ -1,6 +1,7 @@
 #ifndef UROS_CLIENT_H
 #define UROS_CLIENT_H
 
+#include <Stream.h>
 #include <micro_ros_platformio.h>
 #include <rcl/rcl.h>
 #include <rclc/executor.h>
@@ -30,10 +31,9 @@ enum ClientState {
     AGENT_DISCONNECTED
 };
 
-
 class UrosClient {
    public:
-    void setup();
+    void setup(Stream &stream);
     void subscribeToStateChange(void (*callback)(ClientState));
 
    private:
