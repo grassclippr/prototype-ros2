@@ -77,4 +77,11 @@ def generate_launch_description():
             arguments=['diff_drive_controller', '--controller-manager', '/controller_manager'],
             output='screen'
         ),
+
+        # Micro-ROS agent (proxies communication with the baseboard)
+        Node(
+            package='micro_ros_agent',
+            executable='micro_ros_agent',
+            arguments=['serial', '--dev','/dev/ttyACM0'],
+        ),
     ])

@@ -8,6 +8,7 @@
 #include <rclc/rclc.h>
 #include <std_msgs/msg/int32.h>
 
+#include <functional>
 #include <vector>
 
 #define RCCHECK(fn)                    \
@@ -34,7 +35,19 @@ enum ClientState {
 class UrosClient {
    public:
     void setup(Stream &stream);
-    void subscribeToStateChange(void (*callback)(ClientState));
+
+    void subscribeToStateChange(std::function<void(ClientState)> callback) {
+        state_change_callbacks.push_back(callback);
+    }
+    void onCreateEntities(std::function<void(rcl_node_t *node, rclc_support_t *support)> callback) {
+        onCreateCallbacks.push_back(callback);
+    }
+    void onExecutorInit(std::function<void(rclc_executor_t *executor)> callback) {
+        onExecutorInitCallbacks.push_back(callback);
+    }
+    void onDestroyEntities(std::function<void(rcl_node_t *node, rclc_support_t *support)> callback) {
+        onDestroyCallbacks.push_back(callback);
+    }
 
    private:
     static void urosTask(void *arg);
@@ -45,13 +58,15 @@ class UrosClient {
     void destroy_entities();
 
     ClientState state = WAITING_AGENT;
-    std::vector<void (*)(ClientState)> state_change_callbacks;
+    std::vector<std::function<void(ClientState)>> state_change_callbacks;
+    std::vector<std::function<void(rcl_node_t *node, rclc_support_t *support)>> onCreateCallbacks;
+    std::vector<std::function<void(rclc_executor_t *executor)>> onExecutorInitCallbacks;
+    std::vector<std::function<void(rcl_node_t *node, rclc_support_t *support)>> onDestroyCallbacks;
 
     rclc_executor_t executor;
     rclc_support_t support;
     rcl_allocator_t allocator;
     rcl_node_t node;
-    rcl_timer_t timer;
 };
 
 #endif  // UROS_CLIENT_H

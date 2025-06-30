@@ -4,25 +4,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-rcl_publisher_t publisher;
-std_msgs__msg__Int32 msg;
-
-void UrosClient::subscribeToStateChange(void (*callback)(ClientState)) {
-    state_change_callbacks.push_back(callback);
-}
-
 void UrosClient::reportNewState(ClientState new_state) {
     state = new_state;
     for (auto &callback : state_change_callbacks) {
         callback(new_state);
     }
-}
-
-void UrosClient::timerCallback(rcl_timer_t *timer, int64_t last_call_time) {
-    RCLC_UNUSED(last_call_time);
-
-    RCSOFTCHECK(rcl_publish(&publisher, &msg, NULL));
-    msg.data++;
 }
 
 bool UrosClient::create_entities() {
@@ -33,26 +19,16 @@ bool UrosClient::create_entities() {
     RCCHECK(rclc_node_init_default(&node, "baseboard", "", &support));
 
     // APP
-    RCCHECK(rclc_publisher_init_default(
-        &publisher,
-        &node,
-        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-        "/baseboard"));
-
-    // Define timer_timeout in milliseconds
-    const uint32_t timer_timeout = 1000;  // Set to desired timeout in ms
-    RCCHECK(rclc_timer_init_default2(
-        &timer,
-        &support,
-        RCL_MS_TO_NS(timer_timeout),
-        timerCallback,
-        true));  // autostart = true
+    for (auto &callback : onCreateCallbacks) {
+        callback(&node, &support);
+    }
 
     // COM
     RCCHECK(rclc_executor_init(&executor, &support.context, 1, &allocator));
-    RCCHECK(rclc_executor_add_timer(&executor, &timer));
-
-    msg.data = 0;
+    for (auto &callback : onExecutorInitCallbacks) {
+        callback(&executor);
+    }
+    
     return true;
 }
 
@@ -61,8 +37,9 @@ void UrosClient::destroy_entities() {
     (void)rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
 
     // APP
-    rcl_publisher_fini(&publisher, &node);
-    rcl_timer_fini(&timer);
+    for (auto &callback : onDestroyCallbacks) {
+        callback(&node, &support);
+    }
 
     // COM
     rclc_executor_fini(&executor);
