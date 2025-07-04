@@ -6,6 +6,16 @@ ARG ROS_DISTRO=jazzy
 # We're using the ros-base image which includes core ROS 2 packages
 FROM ros:${ROS_DISTRO}-ros-base
 
+# Set timezone and ensure time sync with host
+ENV TZ=Etc/UTC
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Install ntpdate to sync time with host
+RUN apt-get update -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false && \
+    apt-get install -y --no-install-recommends ntpdate && \
+    ntpdate -s time.nist.gov && \
+    rm -rf /var/lib/apt/lists/*
+
 # Set the maintainer information for this Dockerfile
 LABEL maintainer="AutomaticAddison<automatic_addison@todo.com>"
 
@@ -19,10 +29,12 @@ SHELL ["/bin/bash", "-c"]
 
 # Update the system and install essential tools
 # This step upgrades all packages and installs utilities needed for development
+# Install essential packages
 RUN apt-get update -q && \
-    apt-get upgrade -yq && \
-    apt-get install -yq --no-install-recommends apt-utils wget curl git build-essential \
-    vim sudo lsb-release locales bash-completion tzdata gosu gedit htop nano libserial-dev
+    DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
+    apt-utils wget curl git build-essential \
+    vim sudo lsb-release locales bash-completion tzdata gosu gedit htop nano libserial-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install additional tools required for ROS 2 development
 # These packages help with building and managing ROS 2 workspaces
@@ -46,6 +58,75 @@ RUN apt-get update && \
     ros-${ROS_DISTRO}-demo-nodes-py \
     ros-${ROS_DISTRO}-rviz2 \
     ros-${ROS_DISTRO}-rqt-reconfigure
+
+# Install FastDDS v3 and its dependencies
+RUN apt-get update -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false && \
+    apt-get install -y --no-install-recommends \
+    libasio-dev \
+    libtinyxml2-dev \
+    libssl-dev \
+    libyaml-cpp-dev \
+    libboost-program-options-dev \
+    libboost-system-dev \
+    libboost-thread-dev \
+    libboost-chrono-dev \
+    libboost-filesystem-dev \
+    libboost-regex-dev \
+    libboost-atomic-dev \
+    libboost-date-time-dev \
+    libssl3 \
+    libssl-dev \
+    git \
+    cmake \
+    g++ \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install foonathan_memory (required by Fast-DDS)
+WORKDIR /tmp
+RUN git clone https://github.com/foonathan/memory.git foonathan_memory_vendor \
+    && mkdir -p foonathan_memory_vendor/build \
+    && cd foonathan_memory_vendor/build \
+    && cmake .. \
+        -DCMAKE_CXX_STANDARD=17 \
+        -DFOONATHAN_MEMORY_BUILD_EXAMPLES=OFF \
+        -DFOONATHAN_MEMORY_BUILD_TESTS=OFF \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+    && cmake --build . --target install \
+    && ldconfig \
+    && cd /tmp \
+    && rm -rf foonathan_memory_vendor
+
+# Clone Fast-DDS source (separate step for better caching)
+WORKDIR /tmp
+RUN git clone --recursive https://github.com/eProsima/Fast-DDS.git -b v2.13.4 Fast-DDS-2.13.4
+
+# Build and install Fast-DDS with minimal memory usage
+WORKDIR /tmp/Fast-DDS-2.13.4/build
+# Build with a single job and disable parallel building to reduce memory usage
+RUN cmake .. \
+    -DTHIRDPARTY=ON \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCOMPILE_EXAMPLES=OFF \
+    -DBUILD_SHARED_LIBS=ON \
+    -DSECURITY=OFF \
+    -DCMAKE_CXX_FLAGS="-w -O1" \
+    && MAKEFLAGS="-j1" make \
+    && make install \
+    && ldconfig
+
+# Clean up
+WORKDIR /tmp
+RUN rm -rf Fast-DDS-2.13.4
+
+# Set FastDDS environment variables
+ENV FASTRTPS_DEFAULT_PROFILES_FILE=/root/.ros/fastdds.xml
+ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+ENV RMW_FASTRTPS_USE_QOS_FROM_XML=1
+
+# Create FastDDS configuration directory
+RUN mkdir -p /root/.ros
 
 # Install Mesa graphics drivers
 # Mesa is an open-source implementation of OpenGL and other graphics APIs
