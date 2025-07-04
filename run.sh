@@ -2,17 +2,31 @@
 
 set -e  # Exit on errors
 
-echo -e "🛠️  Starting Docker build..."
+# Detect container runtime (prefer podman if available)
+if command -v podman >/dev/null 2>&1; then
+  CONTAINER_RUNTIME="podman"
+elif command -v docker >/dev/null 2>&1; then
+  CONTAINER_RUNTIME="docker"
+  # Docker needs special handling for rootless mode
+  if [ "$(id -u)" -ne 0 ] && [ "$CONTAINER_RUNTIME" = "docker" ]; then
+    DOCKER_OPTS="--user $(id -u):$(id -g)"
+  fi
+else
+  echo "❌ Error: Neither Podman nor Docker is installed or available in PATH"
+  exit 1
+fi
+
+echo -e "🛠️  Starting container build with $CONTAINER_RUNTIME..."
 
 SCRIPT_PATH=$(dirname $(realpath "$0"))
 # PROJECT_ROOT=$(dirname "$SCRIPT_PATH")
 PROJECT_ROOT=$SCRIPT_PATH
 
 # Show full build log
-docker build -f docker/Dockerfile $PROJECT_ROOT
+$CONTAINER_RUNTIME build -f docker/Dockerfile $PROJECT_ROOT
 
 # Get the image ID using quiet mode (-q)
-image_id=$(docker build -q -f docker/Dockerfile $PROJECT_ROOT)
+image_id=$($CONTAINER_RUNTIME build -q -f docker/Dockerfile $PROJECT_ROOT)
 
 echo -e "\n✅ Build complete. Image ID: $image_id"
 echo "🚀 Starting container..."
@@ -57,4 +71,4 @@ else
 fi
 
 # Run container
-docker run $DOCKER_OPTS "$image_id" /bin/bash
+$CONTAINER_RUNTIME run $DOCKER_OPTS "$image_id" /bin/bash
