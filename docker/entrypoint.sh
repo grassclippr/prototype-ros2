@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -e
 
 # Set ROS distribution
 ROS_DISTRO="jazzy"
@@ -15,6 +15,8 @@ chmod 700 $XDG_RUNTIME_DIR
 ROS_WS="/root/ros2_ws"
 SHARED_ROS2="/root/shared/ros2"
 ROS_DOMAIN_ID_FILE="$SHARED_ROS2/ros_domain_id.txt"
+
+mkdir -p $SHARED_ROS2
 
 # Ensure ROS_DOMAIN_ID file exists
 if [ ! -f "$ROS_DOMAIN_ID_FILE" ]; then
@@ -35,7 +37,7 @@ fi
 
 # Export domain ID for this session
 export ROS_DOMAIN_ID=$(cat "$ROS_DOMAIN_ID_FILE")
-echo "🌐 ROS_DOMAIN_ID set to $ROS_DOMAIN_ID"
+echo "🌐 ROS_DOMAIN_ID set to \"$ROS_DOMAIN_ID\""
 
 # Source ROS setup
 echo "📡 Sourcing ROS 2 environment: /opt/ros/$ROS_DISTRO/setup.bash"

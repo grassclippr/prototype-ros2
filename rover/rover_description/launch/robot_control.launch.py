@@ -79,9 +79,9 @@ def generate_launch_description():
         ),
 
         # Micro-ROS agent (proxies communication with the baseboard)
-        Node(
-            package='micro_ros_agent',
-            executable='micro_ros_agent',
-            arguments=['serial', '--dev','/dev/ttyACM0'],
-        ),
+        #Node(
+        #    package='micro_ros_agent',
+        #    executable='micro_ros_agent',
+        #    arguments=['serial', '--dev','/dev/ttyACM0'],
+        #),
     ])

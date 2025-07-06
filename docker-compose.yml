@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  core:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: core
+    networks:
+      - micro_ros_net
+    command: ["ros2", "launch", "rover_description", "robot_control.launch.py"]
+    volumes:
+      - ./rover:/root/ros2_ws/src/rover
+
+  micro_ros_agent:
+    image: microros/micro-ros-agent:jazzy
+    container_name: micro_ros_agent
+    networks:
+      - micro_ros_net
+    command: ["serial", "--dev", "/dev/ttyACM0"]
+
+networks:
+  micro_ros_net:
+    driver: bridge

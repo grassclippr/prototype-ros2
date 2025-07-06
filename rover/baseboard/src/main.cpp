@@ -44,7 +44,6 @@ void setup() {
         digitalWrite(LYNX_D_LED, state == AGENT_DISCONNECTED ? HIGH : LOW);*/
         // delay(100);
     });
-
     uros_client.onCreateEntities([](rcl_node_t *node, rclc_support_t *support) {
         msg.data = 0;
 

@@ -10,6 +10,8 @@ void LedControl::setup() {
     delay(100);
     digitalWrite(ERROR_LED, LOW);
 
+    button.setup(PIN_INPUT, INPUT_PULLUP, true);
+
     xTaskCreate(
         task,
         "ledTask",
@@ -26,5 +28,6 @@ void LedControl::task(void *arg) {
     while (1) {
         xTaskDelayUntil(&xLastWakeTime, 10 / portTICK_RATE_MS);
         self->status_led.loop();
+        self->button.tick();
     }
 }

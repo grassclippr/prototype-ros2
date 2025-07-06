@@ -2,6 +2,7 @@
 #define LEDS_TASK_H
 
 #include <BlinkControl.h>
+#include <OneButton.h>
 
 #include "../../hardware.h"
 #include "driver/ledc.h"
@@ -13,6 +14,7 @@ class LedControl {
     static void task(void *arg);
 
     BlinkControl status_led = BlinkControl(STATUS_LED, LEDC_CHANNEL_0, 4000, LEDC_TIMER_8_BIT);
+    OneButton button;
 
    private:
 };
