@@ -2,15 +2,23 @@
 #include "./task.h"
 
 void LedControl::setup() {
-    status_led.begin();
-    status_led.off();
-
     pinMode(ERROR_LED, OUTPUT);
+    pinMode(TWAI_LED, OUTPUT);
+    pinMode(LYNX_A_LED, OUTPUT);
+    pinMode(LYNX_B_LED, OUTPUT);
+    pinMode(LYNX_C_LED, OUTPUT);
+    pinMode(LYNX_D_LED, OUTPUT);
+
+    // Initialize leds controlled by BlinkControl lib
+    status_led.begin();
+
+    // Initialize buttons
+    bootButton.setup(BOOT_BUTTON_PIN);
+
+    // Flash ERROR to indicate boot
     digitalWrite(ERROR_LED, HIGH);
     delay(100);
     digitalWrite(ERROR_LED, LOW);
-
-    button.setup(PIN_INPUT, INPUT_PULLUP, true);
 
     xTaskCreate(
         task,
@@ -26,8 +34,8 @@ void LedControl::task(void *arg) {
 
     TickType_t xLastWakeTime = xTaskGetTickCount();
     while (1) {
-        xTaskDelayUntil(&xLastWakeTime, 10 / portTICK_RATE_MS);
+        xTaskDelayUntil(&xLastWakeTime, 1 / portTICK_RATE_MS);
         self->status_led.loop();
-        self->button.tick();
+        self->bootButton.tick();
     }
 }

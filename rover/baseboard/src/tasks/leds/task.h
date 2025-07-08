@@ -14,7 +14,7 @@ class LedControl {
     static void task(void *arg);
 
     BlinkControl status_led = BlinkControl(STATUS_LED, LEDC_CHANNEL_0, 4000, LEDC_TIMER_8_BIT);
-    OneButton button;
+    OneButton bootButton;
 
    private:
 };
