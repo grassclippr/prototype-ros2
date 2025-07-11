@@ -15,6 +15,16 @@ Rover::Rover() {
     motors.setup();
     uros_client.setup(USBSerial);
 
+    leds.bootButton.attachClick([]() {
+        if (selfRover->pairingTaskHandle == nullptr) {
+            printf("Starting pairing mode\n");
+            selfRover->startPairing();
+        } else {
+            printf("Stopping pairing mode\n");
+            selfRover->stopPairing();
+        }
+    });
+
     uros_client.subscribeToStateChange([&](ClientState state) {
         if (state == AGENT_CONNECTED) {
             leds.status_led.on();
@@ -77,10 +87,10 @@ Rover::Rover() {
                 float right_motor_angular = right_wheel_angular * GEARBOX_RATIO;
 
                 // Example: set LEDs based on direction
-                digitalWrite(LYNX_A_LED, left_motor_angular = 0 ? HIGH : LOW);
-                digitalWrite(LYNX_B_LED, left_motor_angular > 0 ? HIGH : LOW);
-                digitalWrite(LYNX_C_LED, right_motor_angular = 0 ? HIGH : LOW);
-                digitalWrite(LYNX_D_LED, right_motor_angular > 0 ? HIGH : LOW);
+                //digitalWrite(LYNX_A_LED, left_motor_angular = 0 ? HIGH : LOW);
+                //digitalWrite(LYNX_B_LED, left_motor_angular > 0 ? HIGH : LOW);
+                //digitalWrite(LYNX_C_LED, right_motor_angular = 0 ? HIGH : LOW);
+                //digitalWrite(LYNX_D_LED, right_motor_angular > 0 ? HIGH : LOW);
             },
             ON_NEW_DATA));
     });
@@ -111,14 +121,69 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
 
     switch(data[0]) {
         case MSG_TYPE_PAIR_REQ: {
-            addEspNowPeer(mac_addr);
+            if (pairingTaskHandle == nullptr) {
+                printf("Pairing request received from %02x:%02x:%02x:%02x:%02x:%02x, but not in pairing mode\n", 
+                    mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+                return;
+            }
+
+            addPeer(mac_addr);
 
             uint8_t ack[] = { MSG_TYPE_PAIR_ACK }; // Answer pair request with ACK
             esp_now_send(mac_addr, ack, sizeof(ack));
+            paired = true;
+            stopPairing();
             break;
         }
         default:
             printf("Unknown ESP-NOW message received: %02X\n", data[0]);
+            digitalWrite(ERROR_LED, HIGH);
+            delay(100);
+            digitalWrite(ERROR_LED, LOW);
+
             break;
     }
+}
+
+void Rover::startPairing() {
+    stopPairing();
+
+    //addBroadcast();
+
+    xTaskCreate(
+        pairingTask,
+        "pairTask",
+        3000,
+        this,
+        1,
+        &pairingTaskHandle);
+}
+
+void Rover::stopPairing() {
+    if (pairingTaskHandle != nullptr) {
+        vTaskDelete(pairingTaskHandle);
+        pairingTaskHandle = nullptr;
+        //removeBroadcast();
+    }
+
+    digitalWrite(LYNX_A_LED, LOW);
+    digitalWrite(LYNX_B_LED, LOW);
+}
+
+void Rover::pairingTask(void *arg) {
+    Rover *self = (Rover *)arg;
+    self->paired = false;
+
+    digitalWrite(LYNX_A_LED, HIGH);
+    digitalWrite(LYNX_B_LED, HIGH);
+
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    while (!self->paired) {
+        // Wait 60 seconds for pairing requests
+        xTaskDelayUntil(&xLastWakeTime, 60000 / portTICK_RATE_MS);
+
+        break;
+    }
+
+    self->stopPairing();
 }

@@ -9,21 +9,35 @@ void LedControl::setup() {
     pinMode(LYNX_C_LED, OUTPUT);
     pinMode(LYNX_D_LED, OUTPUT);
 
-    // Initialize leds controlled by BlinkControl lib
-    status_led.begin();
 
     // Initialize buttons
     bootButton.setup(BOOT_BUTTON_PIN);
 
     // Flash ERROR to indicate boot
+    digitalWrite(STATUS_LED, HIGH);
     digitalWrite(ERROR_LED, HIGH);
+    digitalWrite(TWAI_LED, HIGH);
+    digitalWrite(LYNX_A_LED, HIGH);
+    digitalWrite(LYNX_B_LED, HIGH);
+    digitalWrite(LYNX_C_LED, HIGH);
+    digitalWrite(LYNX_D_LED, HIGH);
     delay(100);
+    digitalWrite(STATUS_LED, LOW);
     digitalWrite(ERROR_LED, LOW);
+    digitalWrite(TWAI_LED, LOW);
+    digitalWrite(LYNX_A_LED, LOW);
+    digitalWrite(LYNX_B_LED, LOW);
+    digitalWrite(LYNX_C_LED, LOW);
+    digitalWrite(LYNX_D_LED, LOW);
+
+    // Initialize leds controlled by BlinkControl lib
+    status_led.begin();
+    status_led.fastBlinking();
 
     xTaskCreate(
         task,
         "ledTask",
-        3000,
+        4000,
         this,
         1,
         NULL);

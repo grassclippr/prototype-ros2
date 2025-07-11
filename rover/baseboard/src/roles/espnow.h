@@ -2,7 +2,9 @@
 #include <Arduino.h>
 #include <esp_now.h>
 
-#define NVS_PEER_KEY "esp-now_peer_mac"
+#define NVS_PEER_KEY "peer_mac"
+#define NVS_PEER_CHANNEL "peer_channel"
+#define NUM_CHANNELS 13 // 13 in europe, 14 in japan, 11 in the US, 12 in China
 
 enum EspNowMsgType {
     MSG_TYPE_UNKNOWN = 0x00,
@@ -13,5 +15,8 @@ enum EspNowMsgType {
     MSG_TYPE_PAIR_ACK = 0xAB,
 };
 
-void addEspNowPeer(const uint8_t *mac);
+void addPeer(const uint8_t *mac);
 bool loadPeerFromNVS();
+
+bool addBroadcast();
+bool removeBroadcast();
