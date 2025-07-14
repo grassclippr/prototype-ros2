@@ -4,6 +4,7 @@
 #include <esp_wifi.h>
 
 extern Preferences nvs;
+uint8_t peer_mac[6];
 
 void addPeer(const uint8_t *mac) {
     if (mac == nullptr) {
@@ -51,6 +52,13 @@ bool loadPeerFromNVS() {
         }
     }
 
+    peer_mac[0] = peerInfo.peer_addr[0];
+    peer_mac[1] = peerInfo.peer_addr[1];
+    peer_mac[2] = peerInfo.peer_addr[2];
+    peer_mac[3] = peerInfo.peer_addr[3];
+    peer_mac[4] = peerInfo.peer_addr[4];
+    peer_mac[5] = peerInfo.peer_addr[5];
+
     esp_wifi_set_channel(peerInfo.channel, WIFI_SECOND_CHAN_NONE);
 
     return true;
@@ -93,4 +101,42 @@ bool removeBroadcast() {
     }
 
     return true;
+}
+
+void sendRtcmOverEspNow(const uint8_t* data, size_t len) {
+    size_t max_data_per_packet = RTCM_ESP_NOW_MAX_PAYLOAD - 3;
+    uint8_t total_parts = (len + max_data_per_packet - 1) / max_data_per_packet;
+
+    for (uint8_t part_idx = 0; part_idx < total_parts; ++part_idx) {
+        size_t offset = part_idx * max_data_per_packet;
+        size_t chunk_len = std::min(max_data_per_packet, len - offset);
+
+        uint8_t packet[RTCM_ESP_NOW_MAX_PAYLOAD];
+        packet[0] = MSG_TYPE_RTCM;
+        packet[1] = total_parts;
+        packet[2] = part_idx;
+        memcpy(packet + 3, data + offset, chunk_len);
+
+        esp_now_send(peer_mac, packet, chunk_len + 3);
+    }
+}
+
+void sendNmeaOverEspNow(const String& nmea) {
+    const uint8_t* data = (const uint8_t*)nmea.c_str();
+    size_t len = nmea.length();
+    size_t max_data_per_packet = RTCM_ESP_NOW_MAX_PAYLOAD - 3;
+    uint8_t total_parts = (len + max_data_per_packet - 1) / max_data_per_packet;
+
+    for (uint8_t part_idx = 0; part_idx < total_parts; ++part_idx) {
+        size_t offset = part_idx * max_data_per_packet;
+        size_t chunk_len = std::min(max_data_per_packet, len - offset);
+
+        uint8_t packet[RTCM_ESP_NOW_MAX_PAYLOAD];
+        packet[0] = MSG_TYPE_NMEA; // Define this as a new message type, e.g. #define MSG_TYPE_NMEA 0x03
+        packet[1] = total_parts;
+        packet[2] = part_idx;
+        memcpy(packet + 3, data + offset, chunk_len);
+
+        esp_now_send(peer_mac, packet, chunk_len + 3);
+    }
 }

@@ -1,11 +1,12 @@
 #include "./rover.h"
+
 #include "./espnow.h"
 
 constexpr float GEARBOX_RATIO = 30.0f;   // Example: 30:1 gearbox
 constexpr float WHEEL_RADIUS_M = 0.05f;  // 5 cm wheel radius
 constexpr float WHEEL_BASE_M = 0.20f;    // 20 cm distance between wheels
 
-static Rover * selfRover = nullptr;
+static Rover *selfRover = nullptr;
 
 Rover::Rover() {
     selfRover = this;
@@ -68,7 +69,7 @@ Rover::Rover() {
             &cmd_vel_msg,
             [](const void *msgin) {
                 auto *msg = (const geometry_msgs__msg__Twist *)msgin;
-                //motors.setVelocities(msg);
+                // motors.setVelocities(msg);
 
                 // Calculate wheel speeds (m/s)
                 float v = msg->linear.x;   // Linear velocity (m/s)
@@ -87,10 +88,10 @@ Rover::Rover() {
                 float right_motor_angular = right_wheel_angular * GEARBOX_RATIO;
 
                 // Example: set LEDs based on direction
-                //digitalWrite(LYNX_A_LED, left_motor_angular = 0 ? HIGH : LOW);
-                //digitalWrite(LYNX_B_LED, left_motor_angular > 0 ? HIGH : LOW);
-                //digitalWrite(LYNX_C_LED, right_motor_angular = 0 ? HIGH : LOW);
-                //digitalWrite(LYNX_D_LED, right_motor_angular > 0 ? HIGH : LOW);
+                // digitalWrite(LYNX_A_LED, left_motor_angular = 0 ? HIGH : LOW);
+                // digitalWrite(LYNX_B_LED, left_motor_angular > 0 ? HIGH : LOW);
+                // digitalWrite(LYNX_C_LED, right_motor_angular = 0 ? HIGH : LOW);
+                // digitalWrite(LYNX_D_LED, right_motor_angular > 0 ? HIGH : LOW);
             },
             ON_NEW_DATA));
     });
@@ -107,32 +108,174 @@ Rover::Rover() {
         esp_now_register_recv_cb([](const uint8_t *mac, const uint8_t *data, int len) {
             selfRover->onEspNowRecv(mac, data, len);
         });
-        //esp_now_register_send_cb(onEspNowSent);
-        
+        // esp_now_register_send_cb(onEspNowSent);
+
         // Make sure to load the stored MAC from NVS
         loadPeerFromNVS();
     }
+
+    // Start GNSS receive task
+    xTaskCreate(
+        gnssReceiveTask,
+        "gnssReceiveTask",
+        4000,
+        this,
+        1,
+        nullptr);
 };
+
+void Rover::gnssReceiveTask(void *arg) {
+    Rover *self = (Rover *)arg;
+
+    // start uart port with UART_RX_PIN and UART_TX_PIN
+    Serial2.begin(460800, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
+    // Serial2.print("$PQTMCFGMSGRATE,W,GGA,1,1*58\r\n");
+    // Serial2.print("$PAIR062,0,1*3F\r\n");
+    self->sendNmeaCommand("PAIR062,0,1");
+
+    while (true) {
+        if (Serial2.available() < 1) {
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+            continue;
+        }
+        int first = Serial2.peek();
+
+        switch (first) {
+            case 0xD3: {
+                // RTCM message
+                Serial2.read();  // consume first byte
+                int l1 = Serial2.read();
+                int l2 = Serial2.read();
+                if (l1 < 0 || l2 < 0) {
+                    printf("Error reading RTCM length bytes\n");
+                    break;
+                }
+                int length = l1 * 256 + l2;
+
+                if (length <= 0 || length > 1023) {
+                    printf("Invalid RTCM length: %d\n", length);
+                    // Optionally, flush serial buffer here
+                    break;
+                }
+
+                // Read RTCM payload
+                std::vector<uint8_t> buf(length);
+                int read_bytes = Serial2.readBytes(buf.data(), length);
+                if (read_bytes != length) {
+                    printf("Error reading RTCM payload (%d/%d bytes)\n", read_bytes, length);
+                    break;
+                }
+
+                // Read checksum (3 bytes)
+                uint8_t checksum[3];
+                int cs_read = Serial2.readBytes(checksum, 3);
+                if (cs_read != 3) {
+                    printf("Error reading RTCM checksum\n");
+                    break;
+                }
+
+                // RTCM message id
+                int id = (int(buf[0]) << 4) + (int(buf[1]) >> 4);
+
+                printf("[RTCM] len=%d id=%d\n", length, id);
+
+                // Send it to our peer
+                // sendRtcmOverEspNow(buf.data(), buf.size());
+                break;
+            }
+            case '$': {
+                // NMEA or proprietary message
+                String line = Serial2.readStringUntil('\n');
+                if (line.length() == 0) {
+                    printf("Error reading NMEA line\n");
+                    break;
+                }
+
+                // Split line by ','
+                std::vector<String> parts;
+                int start = 0;
+                int idx = 0;
+                while ((idx = line.indexOf(',', start)) != -1) {
+                    parts.push_back(line.substring(start, idx));
+                    start = idx + 1;
+                }
+                parts.push_back(line.substring(start));
+
+                if (line.indexOf("ERROR") != -1 && parts.size() >= 3) {
+                    printf("[ERROR] command=%s error=%s\n", parts[0].c_str(), parts[2].c_str());
+                }
+                printf("%s\n", line.c_str());
+                break;
+            }
+            default:
+                Serial2.read();  // consume unknown byte
+                // printf("Unknown first byte: 0x%02X\n", first);
+                break;
+        }
+        yield();
+    }
+}
+
+void Rover::sendNmeaCommand(const String &cmd) {
+    // Calculate checksum (XOR of all bytes)
+    uint8_t checksum = 0;
+    for (size_t i = 0; i < cmd.length(); ++i) {
+        checksum ^= cmd[i];
+    }
+    // Format and send: $<cmd>*<checksum>\r\n
+    char buf[128];
+    snprintf(buf, sizeof(buf), "$%s*%02X\r\n", cmd.c_str(), checksum);
+    Serial2.print(buf);
+}
 
 void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t len) {
     if (len < 1) {
         return;
     }
 
-    switch(data[0]) {
+    switch (data[0]) {
         case MSG_TYPE_PAIR_REQ: {
             if (pairingTaskHandle == nullptr) {
-                printf("Pairing request received from %02x:%02x:%02x:%02x:%02x:%02x, but not in pairing mode\n", 
-                    mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+                printf("Pairing request received from %02x:%02x:%02x:%02x:%02x:%02x, but not in pairing mode\n",
+                       mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
                 return;
             }
 
             addPeer(mac_addr);
 
-            uint8_t ack[] = { MSG_TYPE_PAIR_ACK }; // Answer pair request with ACK
+            uint8_t ack[] = {MSG_TYPE_PAIR_ACK};  // Answer pair request with ACK
             esp_now_send(mac_addr, ack, sizeof(ack));
             paired = true;
             stopPairing();
+            break;
+        }
+        case MSG_TYPE_RTCM:
+            printf("RTCM %d bytes\n", len);
+            // Output all data except the 3 first bytes to Serial2
+            if (len < 3) {
+                printf("Received RTCM message too short: %d bytes\n", len);
+                digitalWrite(ERROR_LED, HIGH);
+                delay(100);
+                digitalWrite(ERROR_LED, LOW);
+                return;
+            }
+
+            Serial2.write(data + 3, len - 3);  // Skip first 3 bytes (type, total parts, part index)
+            Serial2.flush();                   // Ensure all data is sent immediately
+            break;
+        case MSG_TYPE_NMEA: {
+            printf("NMEA %d bytes\n", len);
+            if (len < 4) {
+                printf("Received NMEA message too short: %d bytes\n", len);
+                digitalWrite(ERROR_LED, HIGH);
+                delay(100);
+                digitalWrite(ERROR_LED, LOW);
+                return;
+            }
+
+            String nmeaStr((const char *)(data + 3), len - 3);
+            //nmeaStr.trim();  // Remove any trailing whitespace
+            printf("%s\n", nmeaStr.c_str());
             break;
         }
         default:
@@ -148,7 +291,7 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
 void Rover::startPairing() {
     stopPairing();
 
-    //addBroadcast();
+    // addBroadcast();
 
     xTaskCreate(
         pairingTask,
@@ -163,7 +306,7 @@ void Rover::stopPairing() {
     if (pairingTaskHandle != nullptr) {
         vTaskDelete(pairingTaskHandle);
         pairingTaskHandle = nullptr;
-        //removeBroadcast();
+        // removeBroadcast();
     }
 
     digitalWrite(LYNX_A_LED, LOW);

@@ -12,13 +12,16 @@ class Rover {
         Rover();
         void startPairing();
         void stopPairing();
-        static void pairingTask(void *arg);
 
     private:
         // Tasks
         LedControl leds;
         UrosClient uros_client;
         MotorControl motors;
+        static void pairingTask(void *arg);
+        static void gnssReceiveTask(void *arg);
+
+        void sendNmeaCommand(const String& cmd);
 
         // ROS communication
         rcl_timer_t timer;
