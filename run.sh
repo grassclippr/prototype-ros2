@@ -34,7 +34,6 @@ echo "🚀 Starting container..."
 # Run the container interactively and then remove it
 DOCKER_OPTS="--rm -it \
     -v $PROJECT_ROOT/rover:/root/ros2_ws/src/rover \
-    -v $PROJECT_ROOT/uros:/root/ros2_ws/src/uros \
     --privileged \
     -v /dev/serial/by-id:/dev/serial/by-id \
     -v /dev/ttyAMA0:/dev/ttyAMA0 \
