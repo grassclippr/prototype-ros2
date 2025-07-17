@@ -28,9 +28,32 @@ Rover::Rover() {
 
     uros_client.subscribeToStateChange([&](ClientState state) {
         if (state == AGENT_CONNECTED) {
-            leds.status_led.on();
+            digitalWrite(STATUS_LED, HIGH);
+            //leds.status_led.on();
         } else {
-            leds.status_led.blink1();
+            digitalWrite(STATUS_LED, LOW);
+            //leds.status_led.blink1();
+        }
+
+        switch (state) {
+            case AGENT_CONNECTED:
+                digitalWrite(LYNX_C_LED, HIGH);
+                digitalWrite(LYNX_D_LED, HIGH);
+                break;
+            case AGENT_DISCONNECTED:
+                digitalWrite(LYNX_C_LED, LOW);
+                digitalWrite(LYNX_D_LED, LOW);
+                break;
+            case WAITING_AGENT:
+                digitalWrite(LYNX_C_LED, LOW);
+                digitalWrite(LYNX_D_LED, HIGH);
+                break;
+            case CONNECTING:
+                digitalWrite(LYNX_C_LED, HIGH);
+                digitalWrite(LYNX_D_LED, LOW);
+            default:
+                break;
+                delay(10);
         }
     });
     uros_client.onCreateEntities([&](rcl_node_t *node, rclc_support_t *support) {
@@ -40,7 +63,13 @@ Rover::Rover() {
             &publisher,
             node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-            "/baseboard");
+            "baseboard");
+
+        rclc_publisher_init_default(
+            &nmea_publisher,
+            node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(nmea_msgs, msg, Sentence),
+            "nmea_sentence");
 
         rclc_subscription_init_default(
             &cmd_vel_sub,
@@ -67,7 +96,7 @@ Rover::Rover() {
             executor,
             &cmd_vel_sub,
             &cmd_vel_msg,
-            [](const void *msgin) {
+            [](const void *msgin) -> void {
                 auto *msg = (const geometry_msgs__msg__Twist *)msgin;
                 // motors.setVelocities(msg);
 
@@ -92,15 +121,18 @@ Rover::Rover() {
                 // digitalWrite(LYNX_B_LED, left_motor_angular > 0 ? HIGH : LOW);
                 // digitalWrite(LYNX_C_LED, right_motor_angular = 0 ? HIGH : LOW);
                 // digitalWrite(LYNX_D_LED, right_motor_angular > 0 ? HIGH : LOW);
+                return;
             },
             ON_NEW_DATA));
+
+        return true;
     });
 
     // Cleanup when connection is lost
     uros_client.onDestroyEntities([&](rcl_node_t *node, rclc_support_t *support) {
-        rcl_publisher_fini(&publisher, node);
-        rcl_timer_fini(&timer);
-        rcl_subscription_fini(&cmd_vel_sub, node);
+        RCSOFTCHECK(rcl_publisher_fini(&publisher, node));
+        RCSOFTCHECK(rcl_timer_fini(&timer));
+        RCSOFTCHECK(rcl_subscription_fini(&cmd_vel_sub, node));
     });
 
     // Initialize ESP-NOW
@@ -132,6 +164,10 @@ void Rover::gnssReceiveTask(void *arg) {
     // Serial2.print("$PQTMCFGMSGRATE,W,GGA,1,1*58\r\n");
     // Serial2.print("$PAIR062,0,1*3F\r\n");
     self->sendNmeaCommand("PAIR062,0,1");
+
+    self->nmea_msg.sentence.data = (char *)malloc(82 + 1 * sizeof(char));
+    self->nmea_msg.sentence.size = 0;
+    self->nmea_msg.sentence.capacity = 82 + 1;  // 82 is the maximum length of NMEA sentences, +1 for null terminator
 
     while (true) {
         if (Serial2.available() < 1) {
@@ -174,13 +210,7 @@ void Rover::gnssReceiveTask(void *arg) {
                     break;
                 }
 
-                // RTCM message id
-                int id = (int(buf[0]) << 4) + (int(buf[1]) >> 4);
-
-                printf("[RTCM] len=%d id=%d\n", length, id);
-
-                // Send it to our peer
-                // sendRtcmOverEspNow(buf.data(), buf.size());
+                // Ignore the message, sice we don't use RTCM messages in the rover
                 break;
             }
             case '$': {
@@ -191,20 +221,14 @@ void Rover::gnssReceiveTask(void *arg) {
                     break;
                 }
 
-                // Split line by ','
-                std::vector<String> parts;
-                int start = 0;
-                int idx = 0;
-                while ((idx = line.indexOf(',', start)) != -1) {
-                    parts.push_back(line.substring(start, idx));
-                    start = idx + 1;
-                }
-                parts.push_back(line.substring(start));
+                // printf("%s\n", line.c_str());
 
-                if (line.indexOf("ERROR") != -1 && parts.size() >= 3) {
-                    printf("[ERROR] command=%s error=%s\n", parts[0].c_str(), parts[2].c_str());
+                if (line.length() <= 82 && self->uros_client.isConnected()) {
+                    memcpy(selfRover->nmea_msg.sentence.data, line.c_str(), line.length());
+                    selfRover->nmea_msg.sentence.size = line.length();
+
+                    RCSOFTCHECK(rcl_publish(&selfRover->nmea_publisher, &selfRover->nmea_msg, NULL));
                 }
-                printf("%s\n", line.c_str());
                 break;
             }
             default:
@@ -250,10 +274,10 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
             break;
         }
         case MSG_TYPE_RTCM:
-            printf("RTCM %d bytes\n", len);
+            //printf("RTCM %d bytes\n", len);
             // Output all data except the 3 first bytes to Serial2
             if (len < 3) {
-                printf("Received RTCM message too short: %d bytes\n", len);
+                //printf("Received RTCM message too short: %d bytes\n", len);
                 digitalWrite(ERROR_LED, HIGH);
                 delay(100);
                 digitalWrite(ERROR_LED, LOW);
@@ -264,9 +288,9 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
             Serial2.flush();                   // Ensure all data is sent immediately
             break;
         case MSG_TYPE_NMEA: {
-            printf("NMEA %d bytes\n", len);
+            //printf("NMEA %d bytes\n", len);
             if (len < 4) {
-                printf("Received NMEA message too short: %d bytes\n", len);
+                //printf("Received NMEA message too short: %d bytes\n", len);
                 digitalWrite(ERROR_LED, HIGH);
                 delay(100);
                 digitalWrite(ERROR_LED, LOW);
@@ -274,8 +298,8 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
             }
 
             String nmeaStr((const char *)(data + 3), len - 3);
-            //nmeaStr.trim();  // Remove any trailing whitespace
-            printf("%s\n", nmeaStr.c_str());
+            // nmeaStr.trim();  // Remove any trailing whitespace
+            //printf("%s\n", nmeaStr.c_str());
             break;
         }
         default:

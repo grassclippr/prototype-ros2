@@ -6,7 +6,6 @@
 #include <rcl/rcl.h>
 #include <rclc/executor.h>
 #include <rclc/rclc.h>
-#include <std_msgs/msg/int32.h>
 
 #include <functional>
 #include <vector>
@@ -47,6 +46,10 @@ class UrosClient {
     }
     void onDestroyEntities(std::function<void(rcl_node_t *node, rclc_support_t *support)> callback) {
         onDestroyCallbacks.push_back(callback);
+    }
+
+    bool isConnected() const {
+        return state == AGENT_CONNECTED;
     }
 
    private:

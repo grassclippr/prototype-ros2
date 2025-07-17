@@ -15,6 +15,7 @@
   <depend>joint_state_broadcaster</depend>
   <depend>effort_controllers</depend>
   <depend>xacro</depend>
+  <depend>nmea_navsat_driver</depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>

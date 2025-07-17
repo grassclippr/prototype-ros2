@@ -15,7 +15,7 @@ void setup() {
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
 
-    nvs.begin("core", true);
+    nvs.begin("core", false);
     device_role = static_cast<DeviceRole>(nvs.getInt("role", static_cast<int>(ROLE_UNKNOWN)));
     nvs.end();
 

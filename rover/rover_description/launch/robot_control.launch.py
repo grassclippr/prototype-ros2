@@ -78,10 +78,8 @@ def generate_launch_description():
             output='screen'
         ),
 
-        # Micro-ROS agent (proxies communication with the baseboard)
-        #Node(
-        #    package='micro_ros_agent',
-        #    executable='micro_ros_agent',
-        #    arguments=['serial', '--dev','/dev/ttyACM0'],
-        #),
+        Node(
+            package='nmea_navsat_driver',
+            executable='nmea_topic_driver',
+        )
     ])

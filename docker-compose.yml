@@ -18,6 +18,10 @@ services:
     networks:
       - micro_ros_net
     command: ["serial", "--dev", "/dev/ttyACM0"]
+    volumes:
+      - /dev/ttyACM1-1:/dev/ttyACM0
+      #devices:
+      #- /dev/ttyACM0:/dev/ttyACM0
 
 networks:
   micro_ros_net:

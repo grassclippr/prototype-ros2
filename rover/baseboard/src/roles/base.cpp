@@ -11,8 +11,8 @@ static Basestation *selfBasestation = nullptr;
 Basestation::Basestation() {
     selfBasestation = this;
 
-    leds.setup();
-    leds.status_led.blink2();
+    //leds.setup();
+    //leds.status_led.blink2();
 
     leds.bootButton.attachClick([]() {
         if (selfBasestation->pairingTaskHandle == nullptr) {
@@ -32,7 +32,7 @@ Basestation::Basestation() {
         esp_now_register_send_cb([](const uint8_t *mac_addr, esp_now_send_status_t status) {
             if (status != ESP_NOW_SEND_SUCCESS) {
                 digitalWrite(ERROR_LED, HIGH);
-                delay(30);
+                delay(10);
                 digitalWrite(ERROR_LED, LOW);
             }
         });

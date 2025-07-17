@@ -6,8 +6,8 @@ static CLI * selfCli = nullptr;
 CLI::CLI() {
     selfCli = this;
 
-    leds.setup();
-    leds.status_led.blink3();
+    //leds.setup();
+    //leds.status_led.blink3();
 
     USBSerial.begin(115200);
 
@@ -41,13 +41,15 @@ void CLI::loop() {
                     nvs.begin("core", false);
                     nvs.putInt("role", ROLE_BASESTATION);
                     nvs.end();
-                    USBSerial.println("BASE mode selected.");
+                    USBSerial.println("BASE mode selected. (rebooting)");
+                    ESP.restart();
                     break;
                 case 'r':
                     nvs.begin("core", false);
                     nvs.putInt("role", ROLE_ROVER);
                     nvs.end();
-                    USBSerial.println("ROVER mode selected.");
+                    USBSerial.println("ROVER mode selected. (rebooting)");
+                    ESP.restart();
                     break;
                 default:
                     USBSerial.printf("Unknown command: %c\n", command);

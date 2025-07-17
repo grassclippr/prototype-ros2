@@ -1,5 +1,6 @@
-#include <Arduino.h>
 #include "./task.h"
+
+#include <Arduino.h>
 
 void LedControl::setup() {
     pinMode(ERROR_LED, OUTPUT);
@@ -8,7 +9,6 @@ void LedControl::setup() {
     pinMode(LYNX_B_LED, OUTPUT);
     pinMode(LYNX_C_LED, OUTPUT);
     pinMode(LYNX_D_LED, OUTPUT);
-
 
     // Initialize buttons
     bootButton.setup(BOOT_BUTTON_PIN);
@@ -31,8 +31,8 @@ void LedControl::setup() {
     digitalWrite(LYNX_D_LED, LOW);
 
     // Initialize leds controlled by BlinkControl lib
-    status_led.begin();
-    status_led.fastBlinking();
+    // status_led.begin();
+    // status_led.fastBlinking();
 
     xTaskCreate(
         task,
@@ -49,7 +49,7 @@ void LedControl::task(void *arg) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     while (1) {
         xTaskDelayUntil(&xLastWakeTime, 1 / portTICK_RATE_MS);
-        self->status_led.loop();
+        // self->status_led.loop();
         self->bootButton.tick();
     }
 }
