@@ -165,9 +165,7 @@ void Rover::gnssReceiveTask(void *arg) {
     // Serial2.print("$PAIR062,0,1*3F\r\n");
     self->sendNmeaCommand("PAIR062,0,1");
 
-    self->nmea_msg.sentence.data = (char *)malloc(82 + 1 * sizeof(char));
-    self->nmea_msg.sentence.size = 0;
-    self->nmea_msg.sentence.capacity = 82 + 1;  // 82 is the maximum length of NMEA sentences, +1 for null terminator
+    nmea_msgs__msg__Sentence__init(&self->nmea_msg);
 
     while (true) {
         if (Serial2.available() < 1) {
@@ -224,8 +222,9 @@ void Rover::gnssReceiveTask(void *arg) {
                 // printf("%s\n", line.c_str());
 
                 if (line.length() <= 82 && self->uros_client.isConnected()) {
-                    memcpy(selfRover->nmea_msg.sentence.data, line.c_str(), line.length());
+                    strncpy(selfRover->nmea_msg.sentence.data, line.c_str(), selfRover->nmea_msg.sentence.capacity - 1);
                     selfRover->nmea_msg.sentence.size = line.length();
+                    selfRover->nmea_msg.sentence.data[selfRover->nmea_msg.sentence.size] = '\0';
 
                     RCSOFTCHECK(rcl_publish(&selfRover->nmea_publisher, &selfRover->nmea_msg, NULL));
                 }
