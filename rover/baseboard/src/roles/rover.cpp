@@ -354,3 +354,14 @@ void Rover::pairingTask(void *arg) {
 
     self->stopPairing();
 }
+
+void Rover::sendDebugMessage(const String& message) {
+    sendDebugMessage(message.c_str());
+}
+
+void Rover::sendDebugMessage(const char* message) {
+    USBSerial.write(DEBUG_MAGIC_BYTE);
+    USBSerial.print(message);
+    USBSerial.print("\n");
+    USBSerial.flush();
+}
