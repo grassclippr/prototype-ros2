@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   core:
     build:
@@ -12,16 +10,44 @@ services:
     volumes:
       - ./rover:/root/ros2_ws/src/rover
 
+  # --- Proxy setup ---
+  microros_proxy:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.proxy
+    container_name: microros_proxy
+    networks:
+      - micro_ros_net
+    environment:
+      - SERIAL_DEV=${SERIAL_DEV:-/dev/ttyACM0}
+      - PROXY_PORT=${PROXY_PORT:-8888}
+      - BAUDRATE=${BAUDRATE:-115200}
+    devices:
+      - ${SERIAL_DEV:-/dev/ttyACM0}:${SERIAL_DEV:-/dev/ttyACM0}
+    volumes:
+      - ./microros_proxy.py:/app/microros_proxy.py
+    # Internal only: do not expose port externally
+    command: ["python3", "/app/microros_proxy.py", "${SERIAL_DEV:-/dev/ttyACM0}", "${PROXY_PORT:-8888}", "${BAUDRATE:-115200}"]
+    # Uncomment the next line to disable the proxy (and use direct serial instead)
+    # deploy:
+    #   replicas: 0
+
+  # --- micro-ROS Agent (Proxy mode) ---
   micro_ros_agent:
     image: microros/micro-ros-agent:jazzy
     container_name: micro_ros_agent
     networks:
       - micro_ros_net
-    command: ["serial", "--dev", "/dev/ttyACM0"]
-    volumes:
-      - /dev/ttyACM1-1:/dev/ttyACM0
-      #devices:
-      #- /dev/ttyACM0:/dev/ttyACM0
+    environment:
+      - PROXY_PORT=${PROXY_PORT:-8888}
+    # To use the proxy, connect to TCP port (parametrized):
+    command: ["tcp4", "--port", "${PROXY_PORT:-8888}", "-v6"]
+    depends_on:
+      - microros_proxy
+    # To use direct serial instead, comment the above command and uncomment below:
+    # command: ["serial", "--dev", "${SERIAL_DEV:-/dev/ttyACM0}"]
+    # devices:
+    #   - ${SERIAL_DEV:-/dev/ttyACM0}:${SERIAL_DEV:-/dev/ttyACM0}
 
 networks:
   micro_ros_net:
