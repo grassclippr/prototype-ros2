@@ -11,10 +11,12 @@ static Rover *selfRover = nullptr;
 Rover::Rover() {
     selfRover = this;
 
+    serial_write_semaphore = xSemaphoreCreateMutex();
+
     USBSerial.begin(115200);
     leds.setup();
     motors.setup();
-    uros_client.setup(USBSerial);
+    uros_client.setup(Serial);
 
     leds.bootButton.attachClick([]() {
         if (selfRover->pairingTaskHandle == nullptr) {
@@ -29,10 +31,10 @@ Rover::Rover() {
     uros_client.subscribeToStateChange([&](ClientState state) {
         if (state == AGENT_CONNECTED) {
             digitalWrite(STATUS_LED, HIGH);
-            //leds.status_led.on();
+            // leds.status_led.on();
         } else {
             digitalWrite(STATUS_LED, LOW);
-            //leds.status_led.blink1();
+            // leds.status_led.blink1();
         }
 
         switch (state) {
@@ -158,16 +160,77 @@ Rover::Rover() {
 
 void Rover::gnssReceiveTask(void *arg) {
     Rover *self = (Rover *)arg;
+    nmea_msgs__msg__Sentence__init(&self->nmea_msg);
 
     // start uart port with UART_RX_PIN and UART_TX_PIN
     Serial2.begin(460800, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
-    // Serial2.print("$PQTMCFGMSGRATE,W,GGA,1,1*58\r\n");
-    // Serial2.print("$PAIR062,0,1*3F\r\n");
-    self->sendNmeaCommand("PAIR062,0,1");
 
-    self->nmea_msg.sentence.data = (char *)malloc(82 + 1 * sizeof(char));
-    self->nmea_msg.sentence.size = 0;
-    self->nmea_msg.sentence.capacity = 82 + 1;  // 82 is the maximum length of NMEA sentences, +1 for null terminator
+    // Try to verify the GNSS configuration and if not set it
+    while (true) {
+        self->sendNmeaCommand("PQTMGNSSSTOP");  // Stop GNSS module
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+        String value;
+        if (!self->queryGnssConfig("PQTMCFGRCVRMODE", value, 2000)) {
+            continue;
+        }
+
+        printf("Receiver mode: %s\n", value.c_str());
+        int mode = value.toInt();
+        // mode == 1: rover, mode == 2: base, etc.
+        if (mode != 1) {
+            printf("GNSS module is not in rover mode, setting it now...\n");
+            if (!self->sendGnssCommandAndVerifyOK("PQTMRESTOREPAR", "", 5000)) {  // restore default parameters
+                continue;
+            }
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            if (!self->sendGnssCommandAndVerifyOK("PQTMCFGRCVRMODE", "W,1", 5000)) {  // set rover mode
+                continue;
+            }
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            if (!self->sendGnssCommandAndVerifyOK("PQTMSAVEPAR", "", 5000)) {  // save parameters
+                continue;
+            }
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            if (!self->sendGnssCommandAndVerifyOK("PQTMSRR", "", 5000)) {  // reboot GNSS module
+                continue;
+            }
+            continue;
+        }
+
+        if (!self->sendGnssPairCommandAndVerifyOK("062", "2,0", 5000)) {  // turn off GSA messages
+            continue;
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if (!self->sendGnssPairCommandAndVerifyOK("062", "3,0", 5000)) {  // turn off GSV messages
+            continue;
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if (!self->sendGnssPairCommandAndVerifyOK("062", "5,0", 5000)) {  // turn off VTG messages
+            continue;
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if (!self->sendGnssPairCommandAndVerifyOK("050", "200", 5000)) {  // set pos output interval to 200 ms
+            continue;
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if (!self->sendGnssCommandAndVerifyOK("PQTMCFGNMEADP", "W,3,6,3,2,3,2", 5000)) {  // set decimal precision for NMEA. Defaults: UTC=3, POS=6, ALT=2, DOP=2, SPD=3, GOG=2
+            continue;
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+        if (!self->sendGnssCommandAndVerifyOK("PQTMDEBUGON", "", 5000)) {  // turn on GGA messages
+            continue;
+        }
+
+        if (!self->sendGnssCommandAndVerifyOK("PQTMGNSSSTART", "", 5000)) {  // Start GNSS module
+            continue;
+        }
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        break;
+    }
+
+    self->gnssConfigured = true;
 
     while (true) {
         if (Serial2.available() < 1) {
@@ -224,10 +287,21 @@ void Rover::gnssReceiveTask(void *arg) {
                 // printf("%s\n", line.c_str());
 
                 if (line.length() <= 82 && self->uros_client.isConnected()) {
-                    memcpy(selfRover->nmea_msg.sentence.data, line.c_str(), line.length());
+                    if (selfRover->nmea_msg.sentence.data == nullptr || selfRover->nmea_msg.sentence.capacity < line.length() + 1) {
+                        if (selfRover->nmea_msg.sentence.data) {
+                            free(selfRover->nmea_msg.sentence.data);
+                        }
+                        selfRover->nmea_msg.sentence.data = (char *)malloc(line.length() + 1);
+                        selfRover->nmea_msg.sentence.capacity = line.length() + 1;
+                    }
+
+                    strncpy(selfRover->nmea_msg.sentence.data, line.c_str(), selfRover->nmea_msg.sentence.capacity - 1);
                     selfRover->nmea_msg.sentence.size = line.length();
+                    selfRover->nmea_msg.sentence.data[selfRover->nmea_msg.sentence.size] = '\0';
 
                     RCSOFTCHECK(rcl_publish(&selfRover->nmea_publisher, &selfRover->nmea_msg, NULL));
+                } else {
+                    printf("ROVER: %s\n", line.c_str());
                 }
                 break;
             }
@@ -249,7 +323,107 @@ void Rover::sendNmeaCommand(const String &cmd) {
     // Format and send: $<cmd>*<checksum>\r\n
     char buf[128];
     snprintf(buf, sizeof(buf), "$%s*%02X\r\n", cmd.c_str(), checksum);
-    Serial2.print(buf);
+    // printf("SENT: %s", buf);
+
+    if (xSemaphoreTake(serial_write_semaphore, pdMS_TO_TICKS(100)) == pdTRUE) {
+        Serial2.print(buf);
+        Serial2.flush();  // Ensure all data is sent immediately
+        xSemaphoreGive(serial_write_semaphore);
+    } else {
+        printf("Failed to acquire semaphore for sending NMEA command\n");
+    }
+}
+
+bool Rover::queryGnssConfig(const String &param, String &outValue, uint32_t timeout_ms) {
+    // Compose and send the query command, e.g. "PQTMCFGRCVRMODE,R"
+    String cmd = param + ",R";
+    sendNmeaCommand(cmd);
+
+    uint32_t start = millis();
+    while (millis() - start < timeout_ms) {
+        if (Serial2.available()) {
+            String line = Serial2.readStringUntil('\n');
+            // Look for the expected response, e.g. "$PQTMCFGRCVRMODE,OK,2*7A"
+            // line.trim();
+            // printf("R: %s     : ", line.c_str());
+            String prefix = "$" + param + ",OK,";
+            if (line.startsWith(prefix)) {
+                int valueStart = prefix.length();
+                int star = line.indexOf('*', valueStart);
+                if (star != -1) {
+                    outValue = line.substring(valueStart, star);
+                    // printf("OK\n");
+                    return true;
+                } else {
+                    printf("Invalid response format: %s\n", line.c_str());
+                }
+                /*} else if (line.indexOf("ERROR") != -1) {
+                    printf("GNSS module returned error: %s\n", line.c_str());
+                    break;*/
+            } else {
+                // printf("Unexpected response\n");
+            }
+        }
+        yield();
+    }
+    printf("Timeout waiting for %s response\n", param.c_str());
+    return false;
+}
+
+bool Rover::sendGnssCommandAndVerifyOK(const String &cmd, const String &val, uint32_t timeout_ms) {
+    if (val == "") {
+        sendNmeaCommand(cmd);
+    } else {
+        sendNmeaCommand(cmd + "," + val);
+    }
+
+    uint32_t start = millis();
+    while (millis() - start < timeout_ms) {
+        if (Serial2.available()) {
+            String line = Serial2.readStringUntil('\n');
+            line.trim();
+            String prefix = "$" + cmd + ",OK";
+            // Check for exact match (before '*')
+            int star = line.indexOf('*');
+            if (star != -1 && line.substring(0, star) == prefix) {
+                return true;
+            } else if (line.indexOf("ERROR") != -1) {
+                printf("GNSS module returned error: %s\n", line.c_str());
+                break;
+            } else {
+                printf("Unexpected response: %s\n", line.c_str());
+                printf("Expected: %s\n", prefix.c_str());
+            }
+        }
+        yield();
+    }
+    printf("Timeout waiting for %s OK response\n", cmd.c_str());
+    return false;
+}
+
+bool Rover::sendGnssPairCommandAndVerifyOK(const String &cmd, const String &val, uint32_t timeout_ms) {
+    sendNmeaCommand("PAIR" + cmd + "," + val);
+
+    uint32_t start = millis();
+    while (millis() - start < timeout_ms) {
+        if (Serial2.available()) {
+            String line = Serial2.readStringUntil('\n');
+            line.trim();
+            String prefix = "$PAIR001," + cmd + ",0";
+            // Check for exact match (before '*')
+            int star = line.indexOf('*');
+            if (star != -1 && line.substring(0, star) == prefix) {
+                return true;
+            } else {
+                printf("R: %s     : ", line.c_str());
+                printf("Unexpected response: %s\n", line.substring(0, star));
+                printf("Expected: %s\n", prefix.c_str());
+            }
+        }
+        yield();
+    }
+    printf("Timeout waiting for %s OK response\n", cmd.c_str());
+    return false;
 }
 
 void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t len) {
@@ -273,39 +447,94 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
             stopPairing();
             break;
         }
-        case MSG_TYPE_RTCM:
-            //printf("RTCM %d bytes\n", len);
-            // Output all data except the 3 first bytes to Serial2
+        case MSG_TYPE_RTCM: {
+            // printf("RTCM %d bytes\n", len);
+            //  Output all data except the 3 first bytes to Serial2
             if (len < 3) {
-                //printf("Received RTCM message too short: %d bytes\n", len);
+                // printf("Received RTCM message too short: %d bytes\n", len);
                 digitalWrite(ERROR_LED, HIGH);
-                delay(100);
+                delay(20);
                 digitalWrite(ERROR_LED, LOW);
                 return;
             }
 
-            Serial2.write(data + 3, len - 3);  // Skip first 3 bytes (type, total parts, part index)
-            Serial2.flush();                   // Ensure all data is sent immediately
-            break;
-        case MSG_TYPE_NMEA: {
-            //printf("NMEA %d bytes\n", len);
-            if (len < 4) {
-                //printf("Received NMEA message too short: %d bytes\n", len);
+            // Dont forward RTCM messages if GNSS is not configured and ready
+            if (!gnssConfigured) {
+                break;
+            }
+
+            // Package length is normally 50-250 bytes but can be up to 1023 bytes
+            uint16_t pkg_len = (data[4] * 256 + data[5]) + 4;
+            if (pkg_len > 1023 || pkg_len + 3 > len) {
+                break;
+            }
+
+            // Print out the whole RTCM message for debugging
+            /*printf("RTCM message received: %d bytes, pkg_len: %d\n", len, pkg_len);
+            for (size_t i = 0; i < len; ++i) {
+                printf("%02X ", data[i]);
+            }
+            printf("\n");*/
+
+            // Verify the CRC-24Q of the RTCM message located the 3 last bytes. The first 3 bytes are not part of the RTCM message and is not included in the CRC.
+            uint32_t crc = 0;
+            for (size_t i = 3; i < pkg_len + 2; ++i) {
+                unsigned char index = (unsigned char)(crc >> 16) ^ data[i];
+                crc = (crc << 8);
+                crc ^= crc24q[index];
+                crc &= 0x00ffffff;
+            }
+
+            // Check if the CRC matches the last 3 bytes
+            uint32_t received_crc = (data[4 + pkg_len - 2] << 16) |
+                                    (data[4 + pkg_len - 1] << 8) |
+                                    data[4 + pkg_len];
+            if (crc != received_crc) {
+                printf("RTCM CRC mismatch: calculated 0x%06X, received 0x%06X, rtcm length %d, len %d\n", crc, received_crc, pkg_len, len);
                 digitalWrite(ERROR_LED, HIGH);
-                delay(100);
+                delay(20);
                 digitalWrite(ERROR_LED, LOW);
                 return;
+            }
+
+            // Aquire semaphore to ensure thread-safe write to Serial2
+            if (xSemaphoreTake(serial_write_semaphore, pdMS_TO_TICKS(100)) == pdTRUE) {
+                // Forward the RTCM message to Serial2
+                Serial2.write(data + 3, pkg_len + 2);  // Skip first 3 bytes (type, total parts, part index)
+                xSemaphoreGive(serial_write_semaphore);
+            }
+            break;
+        }
+        case MSG_TYPE_NMEA: {
+            // printf("NMEA %d bytes\n", len);
+            if (len < 4) {
+                // printf("Received NMEA message too short: %d bytes\n", len);
+                digitalWrite(ERROR_LED, HIGH);
+                delay(20);
+                digitalWrite(ERROR_LED, LOW);
+                return;
+            }
+
+            if (!gnssConfigured) {
+                break;
             }
 
             String nmeaStr((const char *)(data + 3), len - 3);
+            /*if (xSemaphoreTake(serial_write_semaphore, pdMS_TO_TICKS(100)) == pdTRUE) {
+                Serial2.print(nmeaStr);
+                Serial2.print("\n");
+                xSemaphoreGive(serial_write_semaphore);
+            }*/
             // nmeaStr.trim();  // Remove any trailing whitespace
-            //printf("%s\n", nmeaStr.c_str());
+            if (!selfRover->uros_client.isConnected()) {
+                printf("BASE: %s\n", nmeaStr.c_str());
+            }
             break;
         }
         default:
             printf("Unknown ESP-NOW message received: %02X\n", data[0]);
             digitalWrite(ERROR_LED, HIGH);
-            delay(100);
+            delay(20);
             digitalWrite(ERROR_LED, LOW);
 
             break;

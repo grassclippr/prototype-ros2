@@ -11,8 +11,8 @@ static Basestation *selfBasestation = nullptr;
 Basestation::Basestation() {
     selfBasestation = this;
 
-    //leds.setup();
-    //leds.status_led.blink2();
+    // leds.setup();
+    // leds.status_led.blink2();
 
     leds.bootButton.attachClick([]() {
         if (selfBasestation->pairingTaskHandle == nullptr) {
@@ -56,9 +56,76 @@ void Basestation::gnssReceiveTask(void *arg) {
 
     // start uart port with UART_RX_PIN and UART_TX_PIN
     Serial2.begin(460800, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
-    // Serial2.print("$PQTMCFGMSGRATE,W,GGA,1,1*58\r\n");
-    // Serial2.print("$PAIR062,0,1*3F\r\n");
-    self->sendNmeaCommand("PAIR062,0,1");
+
+    // Try to verify the GNSS configuration and if not set it
+    while (true) {
+        self->sendNmeaCommand("PQTMGNSSSTOP");  // Stop GNSS module
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+        String value;
+        if (!self->queryGnssConfig("PQTMCFGRCVRMODE", value, 2000)) {
+            continue;
+        }
+
+        printf("Receiver mode: %s\n", value.c_str());
+        int mode = value.toInt();
+        // mode == 1: rover, mode == 2: base, etc.
+        if (mode != 2) {
+            printf("GNSS module is not in base mode, setting it now...\n");
+            if (!self->sendGnssCommandAndVerifyOK("PQTMRESTOREPAR", "", 5000)) {  // restore default parameters
+                continue;
+            }
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            if (!self->sendGnssCommandAndVerifyOK("PQTMCFGRCVRMODE", "W,2", 5000)) {  // set base mode
+                continue;
+            }
+            /*vTaskDelay(1000 / portTICK_PERIOD_MS);
+            if (!self->sendGnssCommandAndVerifyOK("PQTMCFGSVIN", "W,1,120,15,0,0,0", 5000)) {  // activate survey-in mode
+                continue;
+            }*/
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            if (!self->sendGnssCommandAndVerifyOK("PQTMSAVEPAR", "", 5000)) {  // save parameters
+                continue;
+            }
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            if (!self->sendGnssCommandAndVerifyOK("PQTMSRR", "", 5000)) {  // reboot GNSS module
+                continue;
+            }
+            continue;
+        }
+
+        if (!self->sendGnssCommandAndVerifyOK("PQTMCFGSVIN", "W,2,0,0,3382249.9758,877343.3679,5318175.9718", 5000)) {  // activate survey-in mode
+            continue;
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if (!self->sendGnssPairCommandAndVerifyOK("432", "1", 5000)) {  // send RTCM correction messages in MSM7 format
+            continue;
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if (!self->sendGnssPairCommandAndVerifyOK("434", "1", 5000)) {  // send RTCM antenna position messages
+            continue;
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if (!self->sendGnssPairCommandAndVerifyOK("436", "0", 5000)) {  // dont send RTCM satellite ephemeris messages
+            continue;
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if (!self->sendGnssPairCommandAndVerifyOK("062", "0,1", 5000)) {  // turn on GGA messages
+            continue;
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if (!self->sendGnssCommandAndVerifyOK("PQTMCFGMSGRATE", "W,PQTMSVINSTATUS,1,1", 5000)) {  // set PQTMSVINSTATUS message rate
+            continue;
+        }
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        if (!self->sendGnssCommandAndVerifyOK("PQTMGNSSSTART", "", 5000)) {  // Start GNSS module
+            continue;
+        }
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        break;
+    }
+
+    self->gnssConfigured = true;
 
     while (true) {
         if (Serial2.available() < 1) {
@@ -107,7 +174,14 @@ void Basestation::gnssReceiveTask(void *arg) {
                 printf("[RTCM] len=%d id=%d\n", length, id);
 
                 // Send it to our peer
-                sendRtcmOverEspNow(buf.data(), buf.size());
+                std::vector<uint8_t> full_msg;
+                full_msg.push_back(0xD3);
+                full_msg.push_back(l1);
+                full_msg.push_back(l2);
+                full_msg.insert(full_msg.end(), buf.begin(), buf.end());
+                full_msg.insert(full_msg.end(), checksum, checksum + 3);
+                sendRtcmOverEspNow(full_msg.data(), full_msg.size());
+                // sendRtcmOverEspNow(buf.data(), buf.size());
                 break;
             }
             case '$': {
@@ -173,7 +247,101 @@ void Basestation::sendNmeaCommand(const String &cmd) {
     // Format and send: $<cmd>*<checksum>\r\n
     char buf[128];
     snprintf(buf, sizeof(buf), "$%s*%02X\r\n", cmd.c_str(), checksum);
+
     Serial2.print(buf);
+    Serial2.flush();  // Ensure all data is sent immediately
+}
+
+bool Basestation::queryGnssConfig(const String &param, String &outValue, uint32_t timeout_ms) {
+    // Compose and send the query command, e.g. "PQTMCFGRCVRMODE,R"
+    String cmd = param + ",R";
+    sendNmeaCommand(cmd);
+
+    uint32_t start = millis();
+    while (millis() - start < timeout_ms) {
+        if (Serial2.available()) {
+            String line = Serial2.readStringUntil('\n');
+            // Look for the expected response, e.g. "$PQTMCFGRCVRMODE,OK,2*7A"
+            // line.trim();
+            printf("R: %s     : ", line.c_str());
+            String prefix = "$" + param + ",OK,";
+            if (line.startsWith(prefix)) {
+                int valueStart = prefix.length();
+                int star = line.indexOf('*', valueStart);
+                if (star != -1) {
+                    outValue = line.substring(valueStart, star);
+                    printf("OK\n");
+                    return true;
+                } else {
+                    printf("Invalid response format: %s\n", line.c_str());
+                }
+                /*} else if (line.indexOf("ERROR") != -1) {
+                    printf("GNSS module returned error: %s\n", line.c_str());
+                    break;*/
+            } else {
+                printf("Unexpected response\n");
+            }
+        }
+        yield();
+    }
+    printf("Timeout waiting for %s response\n", param.c_str());
+    return false;
+}
+
+bool Basestation::sendGnssCommandAndVerifyOK(const String &cmd, const String &val, uint32_t timeout_ms) {
+    if (val == "") {
+        sendNmeaCommand(cmd);
+    } else {
+        sendNmeaCommand(cmd + "," + val);
+    }
+
+    uint32_t start = millis();
+    while (millis() - start < timeout_ms) {
+        if (Serial2.available()) {
+            String line = Serial2.readStringUntil('\n');
+            line.trim();
+            String prefix = "$" + cmd + ",OK";
+            // Check for exact match (before '*')
+            int star = line.indexOf('*');
+            if (star != -1 && line.substring(0, star) == prefix) {
+                return true;
+            } else if (line.indexOf("ERROR") != -1) {
+                printf("GNSS module returned error: %s\n", line.c_str());
+                break;
+            } else {
+                printf("Unexpected response: %s\n", line.c_str());
+                printf("Expected: %s\n", prefix.c_str());
+            }
+        }
+        yield();
+    }
+    printf("Timeout waiting for %s OK response\n", cmd.c_str());
+    return false;
+}
+
+bool Basestation::sendGnssPairCommandAndVerifyOK(const String &cmd, const String &val, uint32_t timeout_ms) {
+    sendNmeaCommand("PAIR" + cmd + "," + val);
+
+    uint32_t start = millis();
+    while (millis() - start < timeout_ms) {
+        if (Serial2.available()) {
+            String line = Serial2.readStringUntil('\n');
+            line.trim();
+            String prefix = "$PAIR001," + cmd + ",0";
+            // Check for exact match (before '*')
+            int star = line.indexOf('*');
+            if (star != -1 && line.substring(0, star) == prefix) {
+                return true;
+            } else {
+                printf("R: %s     : ", line.c_str());
+                printf("Unexpected response: %s\n", line.substring(0, star));
+                printf("Expected: %s\n", prefix.c_str());
+            }
+        }
+        yield();
+    }
+    printf("Timeout waiting for %s OK response\n", cmd.c_str());
+    return false;
 }
 
 void Basestation::startPairing() {
