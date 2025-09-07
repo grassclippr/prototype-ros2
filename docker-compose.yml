@@ -22,8 +22,8 @@ services:
       - SERIAL_DEV=${SERIAL_DEV:-/dev/ttyACM0}
       - PROXY_PORT=${PROXY_PORT:-8888}
       - BAUDRATE=${BAUDRATE:-115200}
-    devices:
-      - ${SERIAL_DEV:-/dev/ttyACM0}:${SERIAL_DEV:-/dev/ttyACM0}
+        #devices:
+        #- ${SERIAL_DEV:-/dev/ttyACM0}:${SERIAL_DEV:-/dev/ttyACM0}
     volumes:
       - ./microros_proxy.py:/app/microros_proxy.py
     # Internal only: do not expose port externally
@@ -44,6 +44,8 @@ services:
     command: ["tcp4", "--port", "${PROXY_PORT:-8888}", "-v6"]
     depends_on:
       - microros_proxy
+    ports:
+      - 8888:8888
     # To use direct serial instead, comment the above command and uncomment below:
     # command: ["serial", "--dev", "${SERIAL_DEV:-/dev/ttyACM0}"]
     # devices:

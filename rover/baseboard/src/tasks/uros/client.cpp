@@ -1,8 +1,12 @@
-#include <Arduino.h>
 #include "./client.h"
 
+#include <Arduino.h>
+
+#include "./cobs_wrapper.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
+CobsStream cobs_stream(USBSerial);
 
 void UrosClient::reportNewState(ClientState new_state) {
     state = new_state;
@@ -28,7 +32,7 @@ bool UrosClient::create_entities() {
     for (auto &callback : onExecutorInitCallbacks) {
         callback(&executor);
     }
-    
+
     return true;
 }
 
@@ -47,8 +51,12 @@ void UrosClient::destroy_entities() {
     rclc_support_fini(&support);
 }
 
-void UrosClient::setup(Stream & stream) {
-    set_microros_serial_transports(stream);
+void UrosClient::setup(Stream &stream) {
+    // create a cobs cobs_encode function
+
+    // create a custom Stream wrapper that applies COBS encoding to all outgoing data
+
+    set_microros_serial_transports(cobs_stream);
 
     xTaskCreate(
         urosTask,

@@ -28,8 +28,58 @@ import time
 import sys
 from typing import Optional
 
-ROS_MAGIC_BYTE = 0x5A
+ROS_MAGIC_BYTE = 0x00
 DEBUG_MAGIC_BYTE = 0xA5
+
+class cobs_DecodeError(Exception):
+    pass
+
+
+def cobs_get_buffer_view(in_bytes):
+    mv = memoryview(in_bytes)
+    if mv.ndim > 1 or mv.itemsize > 1:
+        raise BufferError('object must be a single-dimension buffer of bytes.')
+    try:
+        if mv.format != 'B':
+            mv = mv.cast('B')
+    except AttributeError:
+        pass
+    return mv
+
+def cobs_decode(in_bytes):
+    """Decode a string using Consistent Overhead Byte Stuffing (COBS).
+    
+    Input should be a byte string that has been COBS encoded. Output
+    is also a byte string.
+    
+    A cobs.DecodeError exception will be raised if the encoded data
+    is invalid."""
+    if isinstance(in_bytes, str):
+        raise TypeError('Unicode-objects are not supported; byte buffer objects only')
+    in_bytes_mv = cobs_get_buffer_view(in_bytes)
+    out_bytes = bytearray()
+    idx = 0
+
+    if len(in_bytes_mv) > 0:
+        while True:
+            length = in_bytes_mv[idx]
+            if length == 0:
+                raise cobs_DecodeError("zero byte found in input")
+            idx += 1
+            end = idx + length - 1
+            copy_mv = in_bytes_mv[idx:end]
+            if 0 in copy_mv:
+                raise cobs_DecodeError("zero byte found in input")
+            out_bytes += copy_mv
+            idx = end
+            if idx > len(in_bytes_mv):
+                raise cobs_DecodeError("not enough input bytes for length code")
+            if idx < len(in_bytes_mv):
+                if length < 0xFF:
+                    out_bytes.append(0)
+            else:
+                break
+    return bytes(out_bytes)
 
 class MicroROSProxy:
     def __init__(self, esp32_port: str = "/dev/ttyACM0",
@@ -58,17 +108,14 @@ class MicroROSProxy:
             # Connect to ESP32
             self.esp32_serial = serial.Serial(
                 self.esp32_port,
-                self.esp32_baudrate,
+                #self.esp32_baudrate,
                 timeout=0.1
             )
             print(f"✓ Connected to ESP32 on {self.esp32_port}")
 
-            # Create TCP server for micro-ROS agent
-            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.server_socket.bind((self.agent_host, self.agent_port))
-            self.server_socket.listen(1)
-            print(f"✓ TCP server listening on {self.agent_host}:{self.agent_port}")
+            # Agent reconnect configuration (env overrides)
+            reconnect_delay = float(os.environ.get("AGENT_RECONNECT_DELAY", "1.0"))
+            reconnect_max = float(os.environ.get("AGENT_RECONNECT_MAX", "30.0"))
 
             self.running = True
 
@@ -76,20 +123,50 @@ class MicroROSProxy:
             esp32_thread = threading.Thread(target=self._read_from_esp32, daemon=True)
             esp32_thread.start()
 
-            # Wait for micro-ROS agent connection
-            print("Waiting for micro-ROS agent connection...")
-            self.agent_socket, addr = self.server_socket.accept()
-            print(f"✓ Micro-ROS agent connected from {addr}")
+            print(f"Connecting to micro-ROS agent at {self.agent_host}:{self.agent_port}...")
 
-            # Start agent reading thread
-            agent_thread = threading.Thread(target=self._read_from_agent, daemon=True)
-            agent_thread.start()
-
-            print("🚀 Proxy is running! Press Ctrl+C to stop.")
-
-            # Keep main thread alive
+            # Outbound connection loop with exponential backoff
             while self.running:
-                time.sleep(0.1)
+                try:
+                    self.agent_socket = socket.create_connection((self.agent_host, self.agent_port), timeout=10)
+                    print(f"✓ Connected to micro-ROS agent at {self.agent_host}:{self.agent_port}")
+
+                    # Reset reconnect delay after successful connect
+                    reconnect_delay = float(os.environ.get("AGENT_RECONNECT_DELAY", "1.0"))
+
+                    # Start agent reading thread
+                    agent_thread = threading.Thread(target=self._read_from_agent, daemon=True)
+                    agent_thread.start()
+
+                    print("🚀 Proxy is running! Press Ctrl+C to stop.")
+
+                    # Wait while agent thread is alive or until shutdown
+                    while self.running and agent_thread.is_alive():
+                        time.sleep(0.1)
+
+                    # If shutting down, break out
+                    if not self.running:
+                        break
+
+                    # Agent disconnected — cleanup and prepare to reconnect
+                    if self.agent_socket:
+                        try:
+                            self.agent_socket.close()
+                        except Exception:
+                            pass
+                        self.agent_socket = None
+
+                    print(f"⚠️  Agent disconnected, will attempt to reconnect in {reconnect_delay:.1f}s")
+
+                except KeyboardInterrupt:
+                    print("\n⏹️  Stopping proxy...")
+                    break
+                except Exception as e:
+                    print(f"❌ Agent connection error: {e}. Retrying in {reconnect_delay:.1f}s")
+
+                # Wait before retrying (exponential backoff)
+                time.sleep(reconnect_delay)
+                reconnect_delay = min(reconnect_max, reconnect_delay * 2)
 
         except KeyboardInterrupt:
             print("\n⏹️  Stopping proxy...")
@@ -117,6 +194,8 @@ class MicroROSProxy:
     def _read_from_esp32(self):
         """Read data from ESP32 and route based on magic byte"""
         buffer = bytearray()
+        uros_msg = bytearray()
+        uros_mode = False
 
         while self.running and self.esp32_serial:
             try:
@@ -125,43 +204,79 @@ class MicroROSProxy:
                 if not data:
                     continue
 
-                buffer.extend(data)
+                #print("B:", ' '.join(f'{b:02X}' for b in data))
+                data = buffer + data
+                buffer.clear()
+
+                # Process incoming data byte by byte
+                for index, byte in enumerate(data):
+                    if byte == ROS_MAGIC_BYTE:
+                        if len(data[index+1:]) == 0: # If we are on the last character, add it to the buffer and wait for more data
+                            buffer.append(byte)
+                            uros_mode = False
+                            break
+
+                        if index > 0:
+                            uros_mode = (data[index-1] == ROS_MAGIC_BYTE or data[index + 1] == ROS_MAGIC_BYTE) and byte == ROS_MAGIC_BYTE
+                        else:
+                            uros_mode = data[index + 1] == ROS_MAGIC_BYTE and byte == ROS_MAGIC_BYTE
+                        
+                    if uros_mode:
+                        uros_msg.append(byte)
+                    else:
+                        print(chr(byte), end='', flush=True)
+
+                # If we have uros data, decode and forward it to the agent
+                if len(uros_msg) > 0:
+                    try:
+                        for msg in uros_msg.split(b'\x00'):
+                            if len(msg) > 0:
+                                decoded = cobs_decode(msg)
+                                self._forward_to_agent(decoded)
+
+
+                    except cobs_DecodeError as e:
+                        print(f"❌ COBS decode error: {e}")
+
+                    uros_msg.clear()
+                    
 
                 # Process complete messages in buffer
-                while len(buffer) > 0:
-                    magic_byte = buffer[0]
+                # while len(buffer) > 0:
+                    # magic_byte = buffer[0]
 
-                    if magic_byte == ROS_MAGIC_BYTE:
-                        # This is a ROS message - forward to agent
-                        message = self._extract_ros_message(buffer)
-                        if message:
-                            self._forward_to_agent(message)
-                            buffer = buffer[len(message):]
-                        else:
-                            break  # Need more data
+                    # if magic_byte == ROS_MAGIC_BYTE:
+                        # # This is a ROS message - forward to agent
+                        # message = self._extract_ros_message(buffer)
+                        # if message:
+                            # self._forward_to_agent(message)
+                            # buffer = buffer[len(message):]
+                        # else:
+                            # break  # Need more data
 
-                    elif magic_byte == DEBUG_MAGIC_BYTE:
-                        # This is debug data - print to console
-                        message = self._extract_debug_message(buffer)
-                        if message:
-                            self._print_debug_message(message)
-                            buffer = buffer[len(message):]
-                        else:
-                            break  # Need more data
-                    else:
-                        # Unknown magic byte - might be micro-ROS protocol data
-                        # For now, assume it's ROS data and forward it
-                        message = self._extract_ros_message(buffer)
-                        if message:
-                            self._forward_to_agent(message)
-                            buffer = buffer[len(message):]
-                        else:
-                            # Skip this byte and continue
-                            buffer = buffer[1:]
+                    # elif magic_byte == DEBUG_MAGIC_BYTE:
+                        # # This is debug data - print to console
+                        # message = self._extract_debug_message(buffer)
+                        # if message:
+                            # self._print_debug_message(message)
+                            # buffer = buffer[len(message):]
+                        # else:
+                            # break  # Need more data
+                    # else:
+                        # # Unknown magic byte - might be micro-ROS protocol data
+                        # # For now, assume it's ROS data and forward it
+                        # message = self._extract_ros_message(buffer)
+                        # if message:
+                            # self._forward_to_agent(message)
+                            # buffer = buffer[len(message):]
+                        # else:
+                            # # Skip this byte and continue
+                            # buffer = buffer[1:]
 
             except Exception as e:
                 print(f"❌ Error reading from ESP32: {e}")
                 break
+        print("⏹️  Stopped reading from ESP32")
 
     def _read_from_agent(self):
         """Read data from micro-ROS agent and forward to ESP32"""
@@ -214,6 +329,8 @@ class MicroROSProxy:
                 self.agent_socket.send(message)
             except Exception as e:
                 print(f"❌ Error forwarding to agent: {e}")
+        else:
+            print("❌ No agent connected")
 
     def _print_debug_message(self, message: bytes):
         """Print debug message to console"""
@@ -247,3 +364,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
