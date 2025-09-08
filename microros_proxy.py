@@ -70,6 +70,18 @@ _CRC16_FCSTAB = [
     0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040
 ]
 
+def debug_print_bytes(title: str, data: bytes):
+    # Print title in green
+    print(f"\033[32m{title}:\033[0m", end=' ')
+    # Print bytes, highlight 0x00 in red
+    byte_strs = []
+    for b in data:
+        if b == 0x7E:
+            byte_strs.append(f"\033[31m{b:02X}\033[0m")
+        else:
+            byte_strs.append(f"{b:02X}")
+    print(' '.join(byte_strs))
+
 class DecodeError(Exception):
     pass
 
@@ -161,7 +173,7 @@ class HDLCFrame:
 
     @staticmethod
     def parse(unstuffed: bytes):
-        print("Parsing unstuffed:", ' '.join(f'{b:02X}' for b in unstuffed))
+        # debug_print_bytes("Parsing unstuffed:", unstuffed)
 
         if len(unstuffed) < 6:
             raise ValueError(f"Data is too short: {len(unstuffed)} bytes")
@@ -175,7 +187,10 @@ class HDLCFrame:
         payload_len = int.from_bytes(unstuffed[2:4], 'little')
         expected_total = 4 + payload_len + 2
         if len(unstuffed) < expected_total:
-            raise ValueError(f"Incomplete unstuffed frame: expected {expected_total} bytes, got {len(unstuffed)}")
+            # raise ValueError(f"Incomplete unstuffed frame: expected {expected_total} bytes, got {len(unstuffed)}")
+            return {
+                'error': f"Incomplete unstuffed frame: expected {expected_total} bytes, got {len(unstuffed)}"
+            }
         payload = bytes(unstuffed[4:4 + payload_len])
 
         # Check that the payload does not contain BEGIN_FLAG
@@ -317,10 +332,9 @@ class MicroROSProxy:
 
     def _read_from_esp32(self):
         """Read data from ESP32 and route based on magic byte"""
-        binary_mode = False
         buffer = bytearray()
-        binary_data = bytearray()
-        uros_data = bytearray()
+        binary_buffer = bytearray()
+        last_error = None
 
         while self.running and self.esp32_serial:
             try:
@@ -329,62 +343,82 @@ class MicroROSProxy:
                 if not data:
                     continue
 
-                #print("B:", ' '.join(f'{b:02X}' for b in data))
-                data = buffer + data
-                buffer.clear()
+                buffer += data
 
-                # Process incoming data byte by byte
-                for index, byte in enumerate(data):
-                    if byte == ROS_MAGIC_BYTE:
-                        if len(data[index+1:]) == 0: # If we are on the last character, add it to the buffer and wait for more data
-                            buffer.append(byte)
-                            binary_mode = False
+                while True:
+                    # Look for start of binary frame
+                    start = buffer.find(b'\x00\x00')
+                    if start == -1:
+                        if len(buffer) == 1 and buffer[0] == 0x00:
+                            # Single 0x00 byte, wait for more data
                             break
 
-                        if index > 0:
-                            binary_mode = (data[index-1] == ROS_MAGIC_BYTE or data[index + 1] == ROS_MAGIC_BYTE) and byte == ROS_MAGIC_BYTE
-                        else:
-                            binary_mode = data[index + 1] == ROS_MAGIC_BYTE and byte == ROS_MAGIC_BYTE
-                        
-                    if binary_mode:
-                        binary_data.append(byte)
-                    else:
-                        print(chr(byte), end='', flush=True)
+                        # No binary frame, print all as text and clear buffer
+                        if buffer:
+                            print(buffer.decode('utf-8', errors='replace'), end='', flush=True)
+                            buffer.clear()
+                        break
 
-                # If we have binary data, decode and add it to uros_data
-                if len(binary_data) > 0:
+                    # Print any text before binary frame
+                    if start > 0:
+                        print(buffer[:start].decode('utf-8', errors='replace'), end='', flush=True)
+
+                    # Look for end of binary frame
+                    end = buffer.find(b'\x00', start + 2)
+                    if end == -1:
+                        # Wait for more data
+                        break
+
+                    # Extract binary frame
+                    binary_frame = buffer[start + 2:end]
+
+                    # Process binary frame (COBS decode, etc.)
                     try:
-                        for msg in binary_data.split(b'\x00'):
-                            if len(msg) > 0:
-                                decoded = CobsCodec.decode(msg)
-                                #print("D:", ' '.join(f'{b:02X}' for b in decoded))
-                                uros_data += decoded
-                        binary_data.clear()
+                        decoded = CobsCodec.decode(binary_frame)
+                        binary_buffer += decoded
                     except DecodeError as e:
                         print(f"❌ COBS decode error: {e}")
+                    
+                    buffer = buffer[end + 1:]
 
-                
-                    # Try to extract complete frames
-                    try:
-                        while len(uros_data) > 0:
-                            frame = HDLCFrame.parse(uros_data)
-                            if not frame:
-                                break
+                    # split on 0xFE and loop thru each frame. If parse fails, go to next
+                    frame_start = 0
+                    while True:
+                        frame_start = binary_buffer.find(b'\x7E', frame_start)
+                        if frame_start == -1:
+                            break
 
-                            if 'error' in frame:
-                                print(f"❌ Frame parse error: {frame['error']}")
+                        frame_end = binary_buffer.find(b'\x7E', frame_start + 1)
+                        if frame_end == -1:
+                            frame_end = len(binary_buffer)
 
-                            # We have a complete frame, forward payload to agent
-                            if frame and 'payload' in frame:
-                                self._forward_to_agent(frame['payload'])
+                        if frame_start > 0:
+                            debug_print_bytes("Discarding bytes before frame", binary_buffer[:frame_start])
+                            print(f"❌ Frame parse error: {last_error}")
 
-                            if frame and 'last_byte_index' in frame:
-                                # remove processed data from uros_data based on frame['last_byte_index']
-                                uros_data = uros_data[frame['last_byte_index'] + 1:]
-                    except Exception as e:
-                        print(f"❌ Error processing uros_data: {e}")
-                        uros_data.clear()
+                        frame = HDLCFrame.parse(binary_buffer[frame_start:frame_end])
+                        if not frame:
+                            print("❌ Failed to parse HDLC frame")
+                            break
 
+                        # If we got a valid frame, forward to ROS agent
+                        if frame and 'payload' in frame:
+                            self._forward_to_agent(frame['payload'])
+
+                        if 'error' in frame:
+                            last_error = frame['error']
+                            #print(f"❌ Frame parse error: {frame['error']}")
+
+                        # Remove processed frame from buffer
+                        if 'last_byte_index' in frame:
+                            binary_buffer = binary_buffer[frame_start + frame['last_byte_index'] + 1:]
+                            frame_start = 0
+                        
+                        # No more complete frames in buffer
+                        if frame_end == len(binary_buffer):
+                            break
+
+                        frame_start = frame_end
             except Exception as e:
                 print(f"❌ Error reading from ESP32: {e}")
                 break
@@ -401,15 +435,14 @@ class MicroROSProxy:
 
                 # Forward agent data to ESP32
                 if self.esp32_serial:
-                    print("A:", ' '.join(f'{b:02X}' for b in data))
-
+                    debug_print_bytes("TX", data)
                     # Build frame as bytes for debug and atomic write
                     frame = HDLCFrame.build(0x00, 0x00, data)
 
                     # Apply byte stuffing
                     stuffed = FrameStuffing.stuff(frame)
 
-                    print("TX frame:", ' '.join(f'{b:02X}' for b in stuffed))
+                    #print("TX frame:", ' '.join(f'{b:02X}' for b in stuffed))
                     self.esp32_serial.write(stuffed)
                 else:
                     print("❌ No ESP32 connected to forward agent data")
@@ -454,7 +487,7 @@ class MicroROSProxy:
         try:
             if self.agent_socket:
                 try:
-                    print("to agent:", ' '.join(f'{b:02X}' for b in message))
+                    debug_print_bytes(f"RX",message)
                     self.agent_socket.send(message)
                 except Exception as e:
                     print(f"❌ Error forwarding to agent: {e}")

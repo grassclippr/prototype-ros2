@@ -55,7 +55,6 @@ void UrosClient::setup(Stream &stream) {
     // create a cobs cobs_encode function
 
     // create a custom Stream wrapper that applies COBS encoding to all outgoing data
-
     set_microros_serial_transports(cobs_stream);
 
     xTaskCreate(
