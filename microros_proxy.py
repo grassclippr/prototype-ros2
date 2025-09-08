@@ -29,57 +29,181 @@ import sys
 from typing import Optional
 
 ROS_MAGIC_BYTE = 0x00
-DEBUG_MAGIC_BYTE = 0xA5
 
-class cobs_DecodeError(Exception):
+BEGIN_FLAG = 0x7E
+ESCAPE_FLAG = 0x7D
+XOR_FLAG = 0x20
+
+
+_CRC16_FCSTAB = [
+    0x0000, 0xC0C1, 0xC181, 0x0140, 0xC301, 0x03C0, 0x0280, 0xC241,
+    0xC601, 0x06C0, 0x0780, 0xC741, 0x0500, 0xC5C1, 0xC481, 0x0440,
+    0xCC01, 0x0CC0, 0x0D80, 0xCD41, 0x0F00, 0xCFC1, 0xCE81, 0x0E40,
+    0x0A00, 0xCAC1, 0xCB81, 0x0B40, 0xC901, 0x09C0, 0x0880, 0xC841,
+    0xD801, 0x18C0, 0x1980, 0xD941, 0x1B00, 0xDBC1, 0xDA81, 0x1A40,
+    0x1E00, 0xDEC1, 0xDF81, 0x1F40, 0xDD01, 0x1DC0, 0x1C80, 0xDC41,
+    0x1400, 0xD4C1, 0xD581, 0x1540, 0xD701, 0x17C0, 0x1680, 0xD641,
+    0xD201, 0x12C0, 0x1380, 0xD341, 0x1100, 0xD1C1, 0xD081, 0x1040,
+    0xF001, 0x30C0, 0x3180, 0xF141, 0x3300, 0xF3C1, 0xF281, 0x3240,
+    0x3600, 0xF6C1, 0xF781, 0x3740, 0xF501, 0x35C0, 0x3480, 0xF441,
+    0x3C00, 0xFCC1, 0xFD81, 0x3D40, 0xFF01, 0x3FC0, 0x3E80, 0xFE41,
+    0xFA01, 0x3AC0, 0x3B80, 0xFB41, 0x3900, 0xF9C1, 0xF881, 0x3840,
+    0x2800, 0xE8C1, 0xE981, 0x2940, 0xEB01, 0x2BC0, 0x2A80, 0xEA41,
+    0xEE01, 0x2EC0, 0x2F80, 0xEF41, 0x2D00, 0xEDC1, 0xEC81, 0x2C40,
+    0xE401, 0x24C0, 0x2580, 0xE541, 0x2700, 0xE7C1, 0xE681, 0x2640,
+    0x2200, 0xE2C1, 0xE381, 0x2340, 0xE101, 0x21C0, 0x2080, 0xE041,
+    0xA001, 0x60C0, 0x6180, 0xA141, 0x6300, 0xA3C1, 0xA281, 0x6240,
+    0x6600, 0xA6C1, 0xA781, 0x6740, 0xA501, 0x65C0, 0x6480, 0xA441,
+    0x6C00, 0xACC1, 0xAD81, 0x6D40, 0xAF01, 0x6FC0, 0x6E80, 0xAE41,
+    0xAA01, 0x6AC0, 0x6B80, 0xAB41, 0x6900, 0xA9C1, 0xA881, 0x6840,
+    0x7800, 0xB8C1, 0xB981, 0x7940, 0xBB01, 0x7BC0, 0x7A80, 0xBA41,
+    0xBE01, 0x7EC0, 0x7F80, 0xBF41, 0x7D00, 0xBDC1, 0xBC81, 0x7C40,
+    0xB401, 0x74C0, 0x7580, 0xB541, 0x7700, 0xB7C1, 0xB681, 0x7640,
+    0x7200, 0xB2C1, 0xB381, 0x7340, 0xB101, 0x71C0, 0x7080, 0xB041,
+    0x5000, 0x90C1, 0x9181, 0x5140, 0x9301, 0x53C0, 0x5280, 0x9241,
+    0x9601, 0x56C0, 0x5780, 0x9741, 0x5500, 0x95C1, 0x9481, 0x5440,
+    0x9C01, 0x5CC0, 0x5D80, 0x9D41, 0x5F00, 0x9FC1, 0x9E81, 0x5E40,
+    0x5A00, 0x9AC1, 0x9B81, 0x5B40, 0x9901, 0x59C0, 0x5880, 0x9841,
+    0x8801, 0x48C0, 0x4980, 0x8941, 0x4B00, 0x8BC1, 0x8A81, 0x4A40,
+    0x4E00, 0x8EC1, 0x8F81, 0x4F40, 0x8D01, 0x4DC0, 0x4C80, 0x8C41,
+    0x4400, 0x84C1, 0x8581, 0x4540, 0x8701, 0x47C0, 0x4680, 0x8641,
+    0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040
+]
+
+class DecodeError(Exception):
     pass
 
+class CobsCodec:
+    @staticmethod
+    def decode(in_bytes):
+        if isinstance(in_bytes, str):
+            raise TypeError('Unicode-objects are not supported; byte buffer objects only')
+        mv = memoryview(in_bytes)
+        if mv.ndim > 1 or mv.itemsize > 1:
+            raise BufferError('object must be a single-dimension buffer of bytes.')
+        try:
+            if mv.format != 'B':
+                mv = mv.cast('B')
+        except AttributeError:
+            pass
+        out_bytes = bytearray()
+        idx = 0
+        if len(mv) > 0:
+            while True:
+                length = mv[idx]
+                if length == 0:
+                    raise DecodeError("zero byte found in input")
+                idx += 1
+                end = idx + length - 1
+                copy_mv = mv[idx:end]
+                if 0 in copy_mv:
+                    raise DecodeError("zero byte found in input")
+                out_bytes += copy_mv
+                idx = end
+                if idx > len(mv):
+                    raise DecodeError("not enough input bytes for length code")
+                if idx < len(mv):
+                    if length < 0xFF:
+                        out_bytes.append(0)
+                else:
+                    break
+        return bytes(out_bytes)
 
-def cobs_get_buffer_view(in_bytes):
-    mv = memoryview(in_bytes)
-    if mv.ndim > 1 or mv.itemsize > 1:
-        raise BufferError('object must be a single-dimension buffer of bytes.')
-    try:
-        if mv.format != 'B':
-            mv = mv.cast('B')
-    except AttributeError:
-        pass
-    return mv
-
-def cobs_decode(in_bytes):
-    """Decode a string using Consistent Overhead Byte Stuffing (COBS).
-    
-    Input should be a byte string that has been COBS encoded. Output
-    is also a byte string.
-    
-    A cobs.DecodeError exception will be raised if the encoded data
-    is invalid."""
-    if isinstance(in_bytes, str):
-        raise TypeError('Unicode-objects are not supported; byte buffer objects only')
-    in_bytes_mv = cobs_get_buffer_view(in_bytes)
-    out_bytes = bytearray()
-    idx = 0
-
-    if len(in_bytes_mv) > 0:
-        while True:
-            length = in_bytes_mv[idx]
-            if length == 0:
-                raise cobs_DecodeError("zero byte found in input")
-            idx += 1
-            end = idx + length - 1
-            copy_mv = in_bytes_mv[idx:end]
-            if 0 in copy_mv:
-                raise cobs_DecodeError("zero byte found in input")
-            out_bytes += copy_mv
-            idx = end
-            if idx > len(in_bytes_mv):
-                raise cobs_DecodeError("not enough input bytes for length code")
-            if idx < len(in_bytes_mv):
-                if length < 0xFF:
-                    out_bytes.append(0)
+class FrameStuffing:
+    @staticmethod
+    def stuff(frame: bytes) -> bytearray:
+        stuffed = bytearray()
+        stuffed.append(BEGIN_FLAG)
+        for b in frame:
+            if b in (BEGIN_FLAG, ESCAPE_FLAG):
+                stuffed.append(ESCAPE_FLAG)
+                stuffed.append(b ^ XOR_FLAG)
             else:
-                break
-    return bytes(out_bytes)
+                stuffed.append(b)
+        return stuffed
+
+    @staticmethod
+    def unstuff(stuffed: bytes) -> bytearray:
+        unstuffed = bytearray()
+        i = 0
+        while i < len(stuffed):
+            b = stuffed[i]
+            if b == ESCAPE_FLAG:
+                if i + 1 >= len(stuffed):
+                    raise ValueError("Incomplete escape sequence in frame")
+                next_b = stuffed[i + 1]
+                unstuffed.append(next_b ^ XOR_FLAG)
+                i += 2
+            else:
+                unstuffed.append(b)
+                i += 1
+        return unstuffed
+
+class HDLCFrame:
+    @staticmethod
+    def crc16_ccitt(data: bytes) -> int:
+        fcstab = _CRC16_FCSTAB
+        crc = 0x0000
+        for b in data:
+            crc = ((crc >> 8) & 0xFFFF) ^ fcstab[(crc ^ b) & 0xFF]
+        return crc & 0xFFFF
+
+    @staticmethod
+    def build(source_addr: int, remote_addr: int, payload: bytes) -> bytearray:
+        frame = bytearray()
+        frame.append(source_addr)
+        frame.append(remote_addr)
+        frame += len(payload).to_bytes(2, 'little')
+        frame += payload
+        crc = HDLCFrame.crc16_ccitt(payload)
+        frame += crc.to_bytes(2, 'little')
+        return frame
+
+    @staticmethod
+    def parse(unstuffed: bytes):
+        print("Parsing unstuffed:", ' '.join(f'{b:02X}' for b in unstuffed))
+
+        if len(unstuffed) < 6:
+            raise ValueError(f"Data is too short: {len(unstuffed)} bytes")
+        
+        # Find the start of the frame
+        start = unstuffed.find(BEGIN_FLAG)
+        if start == -1:
+            raise ValueError(f"Frame start not found")
+        unstuffed = unstuffed[start + 1:]
+
+        payload_len = int.from_bytes(unstuffed[2:4], 'little')
+        expected_total = 4 + payload_len + 2
+        if len(unstuffed) < expected_total:
+            raise ValueError(f"Incomplete unstuffed frame: expected {expected_total} bytes, got {len(unstuffed)}")
+        payload = bytes(unstuffed[4:4 + payload_len])
+
+        # Check that the payload does not contain BEGIN_FLAG
+        if BEGIN_FLAG in payload:
+            # Return the last_byte_index to allow caller to skip this invalid frame
+            return {
+                'last_byte_index': 4 + payload_len + 2,
+                'error': f"Invalid payload: contains BEGIN_FLAG"
+            }
+
+        # CRC check payload integrity
+        frame_crc = int.from_bytes(unstuffed[4 + payload_len:4 + payload_len + 2], 'little')
+        calc_crc = HDLCFrame.crc16_ccitt(payload)
+        if calc_crc != frame_crc:
+            return {
+                'last_byte_index': 4 + payload_len + 2,
+                'error': f"CRC mismatch: calc=0x{calc_crc:04X}, frame=0x{frame_crc:04X}"
+            }
+
+        return {
+            'source_addr': unstuffed[0],
+            'remote_addr': unstuffed[1],
+            'payload_len': payload_len,
+            'payload': unstuffed[2:4] + payload,
+            'crc': frame_crc,
+            'last_byte_index': 4 + payload_len + 2
+        }
+
 
 class MicroROSProxy:
     def __init__(self, esp32_port: str = "/dev/ttyACM0",
@@ -102,7 +226,7 @@ class MicroROSProxy:
         print(f"Starting Micro-ROS Proxy...")
         print(f"ESP32: {self.esp32_port} @ {self.esp32_baudrate} baud")
         print(f"Agent: {self.agent_host}:{self.agent_port}")
-        print(f"Magic bytes - ROS: 0x{ROS_MAGIC_BYTE:02X}, Debug: 0x{DEBUG_MAGIC_BYTE:02X}")
+        print(f"Magic bytes - ROS: 0x{ROS_MAGIC_BYTE:02X}")
 
         try:
             # Connect to ESP32
@@ -193,9 +317,10 @@ class MicroROSProxy:
 
     def _read_from_esp32(self):
         """Read data from ESP32 and route based on magic byte"""
+        binary_mode = False
         buffer = bytearray()
-        uros_msg = bytearray()
-        uros_mode = False
+        binary_data = bytearray()
+        uros_data = bytearray()
 
         while self.running and self.esp32_serial:
             try:
@@ -213,65 +338,52 @@ class MicroROSProxy:
                     if byte == ROS_MAGIC_BYTE:
                         if len(data[index+1:]) == 0: # If we are on the last character, add it to the buffer and wait for more data
                             buffer.append(byte)
-                            uros_mode = False
+                            binary_mode = False
                             break
 
                         if index > 0:
-                            uros_mode = (data[index-1] == ROS_MAGIC_BYTE or data[index + 1] == ROS_MAGIC_BYTE) and byte == ROS_MAGIC_BYTE
+                            binary_mode = (data[index-1] == ROS_MAGIC_BYTE or data[index + 1] == ROS_MAGIC_BYTE) and byte == ROS_MAGIC_BYTE
                         else:
-                            uros_mode = data[index + 1] == ROS_MAGIC_BYTE and byte == ROS_MAGIC_BYTE
+                            binary_mode = data[index + 1] == ROS_MAGIC_BYTE and byte == ROS_MAGIC_BYTE
                         
-                    if uros_mode:
-                        uros_msg.append(byte)
+                    if binary_mode:
+                        binary_data.append(byte)
                     else:
                         print(chr(byte), end='', flush=True)
 
-                # If we have uros data, decode and forward it to the agent
-                if len(uros_msg) > 0:
+                # If we have binary data, decode and add it to uros_data
+                if len(binary_data) > 0:
                     try:
-                        for msg in uros_msg.split(b'\x00'):
+                        for msg in binary_data.split(b'\x00'):
                             if len(msg) > 0:
-                                decoded = cobs_decode(msg)
-                                self._forward_to_agent(decoded)
-
-
-                    except cobs_DecodeError as e:
+                                decoded = CobsCodec.decode(msg)
+                                #print("D:", ' '.join(f'{b:02X}' for b in decoded))
+                                uros_data += decoded
+                        binary_data.clear()
+                    except DecodeError as e:
                         print(f"❌ COBS decode error: {e}")
 
-                    uros_msg.clear()
-                    
+                
+                    # Try to extract complete frames
+                    try:
+                        while len(uros_data) > 0:
+                            frame = HDLCFrame.parse(uros_data)
+                            if not frame:
+                                break
 
-                # Process complete messages in buffer
-                # while len(buffer) > 0:
-                    # magic_byte = buffer[0]
+                            if 'error' in frame:
+                                print(f"❌ Frame parse error: {frame['error']}")
 
-                    # if magic_byte == ROS_MAGIC_BYTE:
-                        # # This is a ROS message - forward to agent
-                        # message = self._extract_ros_message(buffer)
-                        # if message:
-                            # self._forward_to_agent(message)
-                            # buffer = buffer[len(message):]
-                        # else:
-                            # break  # Need more data
+                            # We have a complete frame, forward payload to agent
+                            if frame and 'payload' in frame:
+                                self._forward_to_agent(frame['payload'])
 
-                    # elif magic_byte == DEBUG_MAGIC_BYTE:
-                        # # This is debug data - print to console
-                        # message = self._extract_debug_message(buffer)
-                        # if message:
-                            # self._print_debug_message(message)
-                            # buffer = buffer[len(message):]
-                        # else:
-                            # break  # Need more data
-                    # else:
-                        # # Unknown magic byte - might be micro-ROS protocol data
-                        # # For now, assume it's ROS data and forward it
-                        # message = self._extract_ros_message(buffer)
-                        # if message:
-                            # self._forward_to_agent(message)
-                            # buffer = buffer[len(message):]
-                        # else:
-                            # # Skip this byte and continue
-                            # buffer = buffer[1:]
+                            if frame and 'last_byte_index' in frame:
+                                # remove processed data from uros_data based on frame['last_byte_index']
+                                uros_data = uros_data[frame['last_byte_index'] + 1:]
+                    except Exception as e:
+                        print(f"❌ Error processing uros_data: {e}")
+                        uros_data.clear()
 
             except Exception as e:
                 print(f"❌ Error reading from ESP32: {e}")
@@ -286,10 +398,23 @@ class MicroROSProxy:
                 if not data:
                     break
 
+
                 # Forward agent data to ESP32
                 if self.esp32_serial:
-                    self.esp32_serial.write(data)
+                    print("A:", ' '.join(f'{b:02X}' for b in data))
 
+                    # Build frame as bytes for debug and atomic write
+                    frame = HDLCFrame.build(0x00, 0x00, data)
+
+                    # Apply byte stuffing
+                    stuffed = FrameStuffing.stuff(frame)
+
+                    print("TX frame:", ' '.join(f'{b:02X}' for b in stuffed))
+                    self.esp32_serial.write(stuffed)
+                else:
+                    print("❌ No ESP32 connected to forward agent data")
+            except TimeoutError:
+                continue
             except Exception as e:
                 print(f"❌ Error reading from agent: {e}")
                 break
@@ -323,14 +448,21 @@ class MicroROSProxy:
             return None
 
     def _forward_to_agent(self, message: bytes):
-        """Forward ROS message to micro-ROS agent"""
-        if self.agent_socket:
-            try:
-                self.agent_socket.send(message)
-            except Exception as e:
-                print(f"❌ Error forwarding to agent: {e}")
-        else:
-            print("❌ No agent connected")
+        if not message:
+            return
+
+        try:
+            if self.agent_socket:
+                try:
+                    print("to agent:", ' '.join(f'{b:02X}' for b in message))
+                    self.agent_socket.send(message)
+                except Exception as e:
+                    print(f"❌ Error forwarding to agent: {e}")
+            else:
+                print("❌ No agent connected")
+
+        except Exception as e:
+            print(f"❌ Error in _forward_to_agent: {e}")
 
     def _print_debug_message(self, message: bytes):
         """Print debug message to console"""
