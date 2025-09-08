@@ -250,6 +250,7 @@ class MicroROSProxy:
                 #self.esp32_baudrate,
                 timeout=0.1
             )
+
             print(f"✓ Connected to ESP32 on {self.esp32_port}")
 
             # Agent reconnect configuration (env overrides)
@@ -435,7 +436,6 @@ class MicroROSProxy:
 
                 # Forward agent data to ESP32
                 if self.esp32_serial:
-                    debug_print_bytes("TX", data)
                     # Build frame as bytes for debug and atomic write
                     frame = HDLCFrame.build(0x00, 0x00, data)
 
@@ -487,7 +487,6 @@ class MicroROSProxy:
         try:
             if self.agent_socket:
                 try:
-                    debug_print_bytes(f"RX",message)
                     self.agent_socket.send(message)
                 except Exception as e:
                     print(f"❌ Error forwarding to agent: {e}")

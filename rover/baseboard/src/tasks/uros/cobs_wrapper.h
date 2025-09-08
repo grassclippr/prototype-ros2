@@ -33,24 +33,15 @@ class CobsStream : public Stream {
 
     size_t write(const uint8_t *buffer, size_t size) override {
         // Apply COBS encoding
-        uint8_t encoded[size + size / 254 + 3 + 3];  // Worst case size
+        uint8_t encoded[size + size / 254 + 3 + 6];  // Worst case size
         encoded[0] = 0x00;                           // Start marker
         encoded[1] = 0x00;                           // Start marker
         size_t len = cobs_encode(buffer, size, encoded + 2);
         encoded[len + 2] = 0x00;  // End marker
 
-        // Write the data in 32 byte chunks to avoid overwhelming the USB buffer
-        size_t n = 0;
-        for (size_t i = 0; i < len + 3; i += 32) {
-            size_t chunk_size = std::min<size_t>(32, len + 3 - i);
-            base_stream.write(encoded + i, chunk_size);
-            base_stream.flush();
-            n += chunk_size;
-        }
+        base_stream.write(encoded, len + 3);
 
-        base_stream.printf("sending %d (%d) bytes\n", size, len+3);
-
-        return n;
+        return size;
     }
 
     // Implement other Stream methods as needed...
