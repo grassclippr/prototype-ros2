@@ -59,7 +59,7 @@ Rover::Rover() {
     uros_client.onCreateEntities([&](rcl_node_t *node, rclc_support_t *support) {
         msg.data = 0;
 
-        rclc_publisher_init_default(
+        /*rclc_publisher_init_default(
             &publisher,
             node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
@@ -76,8 +76,9 @@ Rover::Rover() {
             node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
             "/cmd_vel");
+            */
 
-        const uint32_t timer_timeout = 1000;  // Set to desired timeout in ms
+       /* const uint32_t timer_timeout = 1000;  // Set to desired timeout in ms
         rclc_timer_init_default2(
             &timer,
             support,
@@ -87,12 +88,13 @@ Rover::Rover() {
                 selfRover->msg.data++;
             },
             true);  // autostart = true
+            */
     });
     uros_client.onExecutorInit([&](rclc_executor_t *executor) {
         // Add timer to executor
-        RCCHECK(rclc_executor_add_timer(executor, &timer));
+        //RCCHECK(rclc_executor_add_timer(executor, &timer));
 
-        RCCHECK(rclc_executor_add_subscription(
+        /*RCCHECK(rclc_executor_add_subscription(
             executor,
             &cmd_vel_sub,
             &cmd_vel_msg,
@@ -106,7 +108,7 @@ Rover::Rover() {
 
                 // Differential drive kinematics
                 float left_wheel_speed = v - (w * WHEEL_BASE_M / 2.0f);   // m/s
-                float right_wheel_speed = v + (w * WHEEL_BASE_M / 2.0f);  // m/s
+                float right_wheel_speed = v + (w * WHEEL_BASE_M / 2.0f);  // m/s
 
                 // Convert to wheel angular speed (rad/s)
                 float left_wheel_angular = left_wheel_speed / WHEEL_RADIUS_M;
@@ -124,15 +126,16 @@ Rover::Rover() {
                 return;
             },
             ON_NEW_DATA));
+            */
 
         return true;
     });
 
     // Cleanup when connection is lost
     uros_client.onDestroyEntities([&](rcl_node_t *node, rclc_support_t *support) {
-        RCSOFTCHECK(rcl_publisher_fini(&publisher, node));
-        RCSOFTCHECK(rcl_timer_fini(&timer));
-        RCSOFTCHECK(rcl_subscription_fini(&cmd_vel_sub, node));
+        //RCSOFTCHECK(rcl_publisher_fini(&publisher, node));
+        //RCSOFTCHECK(rcl_timer_fini(&timer));
+        //RCSOFTCHECK(rcl_subscription_fini(&cmd_vel_sub, node));
     });
 
     // Initialize ESP-NOW
@@ -224,10 +227,10 @@ void Rover::gnssReceiveTask(void *arg) {
                 // printf("%s\n", line.c_str());
 
                 if (line.length() <= 82 && self->uros_client.isConnected()) {
-                    memcpy(selfRover->nmea_msg.sentence.data, line.c_str(), line.length());
+                    /*memcpy(selfRover->nmea_msg.sentence.data, line.c_str(), line.length());
                     selfRover->nmea_msg.sentence.size = line.length();
 
-                    RCSOFTCHECK(rcl_publish(&selfRover->nmea_publisher, &selfRover->nmea_msg, NULL));
+                    RCSOFTCHECK(rcl_publish(&selfRover->nmea_publisher, &selfRover->nmea_msg, NULL));*/
                 }
                 break;
             }
@@ -353,4 +356,15 @@ void Rover::pairingTask(void *arg) {
     }
 
     self->stopPairing();
+}
+
+void Rover::sendDebugMessage(const String& message) {
+    sendDebugMessage(message.c_str());
+}
+
+void Rover::sendDebugMessage(const char* message) {
+    USBSerial.write(DEBUG_MAGIC_BYTE);
+    USBSerial.print(message);
+    USBSerial.print("\n");
+    USBSerial.flush();
 }

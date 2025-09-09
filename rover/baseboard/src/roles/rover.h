@@ -9,6 +9,9 @@
 #include "tasks/motors/task.h"
 #include "tasks/uros/client.h"
 
+#define ROS_MAGIC_BYTE 0x5A
+#define DEBUG_MAGIC_BYTE 0xA5
+
 class Rover {
    public:
     Rover();
@@ -22,6 +25,9 @@ class Rover {
     MotorControl motors;
     static void pairingTask(void *arg);
     static void gnssReceiveTask(void *arg);
+
+    void sendDebugMessage(const String& message);
+    void sendDebugMessage(const char* message);
 
     void sendNmeaCommand(const String &cmd);
 
