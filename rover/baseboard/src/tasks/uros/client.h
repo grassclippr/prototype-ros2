@@ -1,6 +1,8 @@
 #ifndef UROS_CLIENT_H
 #define UROS_CLIENT_H
 
+#define RCUTILS_LOG_MIN_SEVERITY RCUTILS_LOG_SEVERITY_DEBUG
+
 #include <Stream.h>
 #include <micro_ros_platformio.h>
 #include <rcl/rcl.h>
@@ -10,12 +12,13 @@
 #include <functional>
 #include <vector>
 
-#define RCCHECK(fn)                    \
-    {                                  \
-        rcl_ret_t temp_rc = fn;        \
-        if ((temp_rc != RCL_RET_OK)) { \
-            return false;              \
-        }                              \
+#define RCCHECK(fn)                                                                 \
+    {                                                                               \
+        rcl_ret_t temp_rc = fn;                                                     \
+        if ((temp_rc != RCL_RET_OK)) {                                              \
+            printf("Failed status on line %d: %d. Aborting.\n", __LINE__, temp_rc); \
+            return false;                                                           \
+        }                                                                           \
     }
 #define RCSOFTCHECK(fn)                \
     {                                  \

@@ -125,7 +125,6 @@ class FrameStuffing:
     @staticmethod
     def stuff(frame: bytes) -> bytearray:
         stuffed = bytearray()
-        stuffed.append(BEGIN_FLAG)
         for b in frame:
             if b in (BEGIN_FLAG, ESCAPE_FLAG):
                 stuffed.append(ESCAPE_FLAG)
@@ -165,9 +164,8 @@ class HDLCFrame:
         frame = bytearray()
         frame.append(source_addr)
         frame.append(remote_addr)
-        frame += len(payload).to_bytes(2, 'little')
         frame += payload
-        crc = HDLCFrame.crc16_ccitt(payload)
+        crc = HDLCFrame.crc16_ccitt(payload[2:]) # dont crc the length bytes
         frame += crc.to_bytes(2, 'little')
         return frame
 
@@ -176,20 +174,23 @@ class HDLCFrame:
         # debug_print_bytes("Parsing unstuffed:", unstuffed)
 
         if len(unstuffed) < 6:
-            raise ValueError(f"Data is too short: {len(unstuffed)} bytes")
+            return {
+                'error': f"expected at least 6 bytes, got {len(unstuffed)}"
+            }
         
         # Find the start of the frame
         start = unstuffed.find(BEGIN_FLAG)
         if start == -1:
-            raise ValueError(f"Frame start not found")
+            return {
+                'error': "No BEGIN_FLAG found in frame"
+            }
         unstuffed = unstuffed[start + 1:]
 
         payload_len = int.from_bytes(unstuffed[2:4], 'little')
         expected_total = 4 + payload_len + 2
         if len(unstuffed) < expected_total:
-            # raise ValueError(f"Incomplete unstuffed frame: expected {expected_total} bytes, got {len(unstuffed)}")
             return {
-                'error': f"Incomplete unstuffed frame: expected {expected_total} bytes, got {len(unstuffed)}"
+                'error': f"expected {expected_total} bytes, got {len(unstuffed)}"
             }
         payload = bytes(unstuffed[4:4 + payload_len])
 
@@ -221,6 +222,9 @@ class HDLCFrame:
 
 
 class MicroROSProxy:
+    last_remote = 0x00
+    last_source = 0x00
+
     def __init__(self, esp32_port: str = "/dev/ttyACM0",
                  esp32_baudrate: int = 115200,
                  agent_host: str = "localhost",
@@ -404,6 +408,9 @@ class MicroROSProxy:
 
                         # If we got a valid frame, forward to ROS agent
                         if frame and 'payload' in frame:
+                            debug_print_bytes("RX frame", binary_buffer[frame_start:frame_end])
+                            self.last_source = frame['source_addr']
+                            self.last_remote = frame['remote_addr']
                             self._forward_to_agent(frame['payload'])
 
                         if 'error' in frame:
@@ -437,12 +444,14 @@ class MicroROSProxy:
                 # Forward agent data to ESP32
                 if self.esp32_serial:
                     # Build frame as bytes for debug and atomic write
-                    frame = HDLCFrame.build(0x00, 0x00, data)
+                    frame = HDLCFrame.build(self.last_source, self.last_remote, data)
 
                     # Apply byte stuffing
                     stuffed = FrameStuffing.stuff(frame)
 
-                    #print("TX frame:", ' '.join(f'{b:02X}' for b in stuffed))
+                    stuffed.insert(0, BEGIN_FLAG)
+
+                    debug_print_bytes("TX frame", stuffed)
                     self.esp32_serial.write(stuffed)
                 else:
                     print("❌ No ESP32 connected to forward agent data")
@@ -451,34 +460,6 @@ class MicroROSProxy:
             except Exception as e:
                 print(f"❌ Error reading from agent: {e}")
                 break
-
-    def _extract_ros_message(self, buffer: bytearray) -> Optional[bytes]:
-        """Extract a complete ROS message from buffer"""
-        # For micro-ROS, we need to understand the protocol framing
-        # This is a simplified version - you may need to adjust based on actual protocol
-        if len(buffer) < 4:
-            return None
-
-        # Micro-ROS typically uses length-prefixed messages
-        # This is a placeholder - actual implementation depends on micro-ROS framing
-        if len(buffer) >= 8:  # Minimum reasonable message size
-            # For now, assume messages are reasonably small and take what we have
-            return bytes(buffer[:min(len(buffer), 256)])
-
-        return None
-
-    def _extract_debug_message(self, buffer: bytearray) -> Optional[bytes]:
-        """Extract a complete debug message from buffer"""
-        # Look for newline-terminated debug messages
-        try:
-            newline_idx = buffer.index(b'\n'[0])
-            return bytes(buffer[:newline_idx + 1])
-        except ValueError:
-            # No newline found - check if buffer is getting too long
-            if len(buffer) > 1024:
-                # Take what we have to avoid buffer overflow
-                return bytes(buffer)
-            return None
 
     def _forward_to_agent(self, message: bytes):
         if not message:
@@ -490,24 +471,8 @@ class MicroROSProxy:
                     self.agent_socket.send(message)
                 except Exception as e:
                     print(f"❌ Error forwarding to agent: {e}")
-            else:
-                print("❌ No agent connected")
-
         except Exception as e:
             print(f"❌ Error in _forward_to_agent: {e}")
-
-    def _print_debug_message(self, message: bytes):
-        """Print debug message to console"""
-        try:
-            # Remove magic byte and decode
-            debug_data = message[1:].decode('utf-8', errors='ignore').strip()
-            timestamp = time.strftime("%H:%M:%S")
-            print(f"🐛 [{timestamp}] ESP32 DEBUG: {debug_data}")
-        except Exception as e:
-            # If decoding fails, print as hex
-            hex_data = ' '.join(f'{b:02X}' for b in message)
-            timestamp = time.strftime("%H:%M:%S")
-            print(f"🐛 [{timestamp}] ESP32 DEBUG (hex): {hex_data}")
 
 def main():
     # Priority: CLI args > environment > defaults

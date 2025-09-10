@@ -29,10 +29,10 @@ Rover::Rover() {
     uros_client.subscribeToStateChange([&](ClientState state) {
         if (state == AGENT_CONNECTED) {
             digitalWrite(STATUS_LED, HIGH);
-            //leds.status_led.on();
+            // leds.status_led.on();
         } else {
             digitalWrite(STATUS_LED, LOW);
-            //leds.status_led.blink1();
+            // leds.status_led.blink1();
         }
 
         switch (state) {
@@ -59,26 +59,25 @@ Rover::Rover() {
     uros_client.onCreateEntities([&](rcl_node_t *node, rclc_support_t *support) {
         msg.data = 0;
 
-        /*rclc_publisher_init_default(
+        rclc_publisher_init_default(
             &publisher,
             node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
             "baseboard");
 
-        rclc_publisher_init_default(
+        /*rclc_publisher_init_default(
             &nmea_publisher,
             node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(nmea_msgs, msg, Sentence),
-            "nmea_sentence");
+            "nmea_sentence");*/
 
         rclc_subscription_init_default(
             &cmd_vel_sub,
             node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
             "/cmd_vel");
-            */
 
-       /* const uint32_t timer_timeout = 1000;  // Set to desired timeout in ms
+        const uint32_t timer_timeout = 1000;  // Set to desired timeout in ms
         rclc_timer_init_default2(
             &timer,
             support,
@@ -88,13 +87,12 @@ Rover::Rover() {
                 selfRover->msg.data++;
             },
             true);  // autostart = true
-            */
     });
     uros_client.onExecutorInit([&](rclc_executor_t *executor) {
         // Add timer to executor
-        //RCCHECK(rclc_executor_add_timer(executor, &timer));
+        // RCCHECK(rclc_executor_add_timer(executor, &timer));
 
-        /*RCCHECK(rclc_executor_add_subscription(
+        RCCHECK(rclc_executor_add_subscription(
             executor,
             &cmd_vel_sub,
             &cmd_vel_msg,
@@ -108,7 +106,7 @@ Rover::Rover() {
 
                 // Differential drive kinematics
                 float left_wheel_speed = v - (w * WHEEL_BASE_M / 2.0f);   // m/s
-                float right_wheel_speed = v + (w * WHEEL_BASE_M / 2.0f);  // m/s
+                float right_wheel_speed = v + (w * WHEEL_BASE_M / 2.0f);  // m/s
 
                 // Convert to wheel angular speed (rad/s)
                 float left_wheel_angular = left_wheel_speed / WHEEL_RADIUS_M;
@@ -118,6 +116,7 @@ Rover::Rover() {
                 float left_motor_angular = left_wheel_angular * GEARBOX_RATIO;
                 float right_motor_angular = right_wheel_angular * GEARBOX_RATIO;
 
+                printf("Cmd Vel: v=%.2f m/s, w=%.2f rad/s\n", v, w);
                 // Example: set LEDs based on direction
                 // digitalWrite(LYNX_A_LED, left_motor_angular = 0 ? HIGH : LOW);
                 // digitalWrite(LYNX_B_LED, left_motor_angular > 0 ? HIGH : LOW);
@@ -126,16 +125,14 @@ Rover::Rover() {
                 return;
             },
             ON_NEW_DATA));
-            */
-
         return true;
     });
 
     // Cleanup when connection is lost
     uros_client.onDestroyEntities([&](rcl_node_t *node, rclc_support_t *support) {
-        //RCSOFTCHECK(rcl_publisher_fini(&publisher, node));
-        //RCSOFTCHECK(rcl_timer_fini(&timer));
-        //RCSOFTCHECK(rcl_subscription_fini(&cmd_vel_sub, node));
+        RCSOFTCHECK(rcl_publisher_fini(&publisher, node));
+        RCSOFTCHECK(rcl_timer_fini(&timer));
+        RCSOFTCHECK(rcl_subscription_fini(&cmd_vel_sub, node));
     });
 
     // Initialize ESP-NOW
@@ -277,10 +274,10 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
             break;
         }
         case MSG_TYPE_RTCM:
-            //printf("RTCM %d bytes\n", len);
-            // Output all data except the 3 first bytes to Serial2
+            // printf("RTCM %d bytes\n", len);
+            //  Output all data except the 3 first bytes to Serial2
             if (len < 3) {
-                //printf("Received RTCM message too short: %d bytes\n", len);
+                // printf("Received RTCM message too short: %d bytes\n", len);
                 digitalWrite(ERROR_LED, HIGH);
                 delay(100);
                 digitalWrite(ERROR_LED, LOW);
@@ -291,9 +288,9 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
             Serial2.flush();                   // Ensure all data is sent immediately
             break;
         case MSG_TYPE_NMEA: {
-            //printf("NMEA %d bytes\n", len);
+            // printf("NMEA %d bytes\n", len);
             if (len < 4) {
-                //printf("Received NMEA message too short: %d bytes\n", len);
+                // printf("Received NMEA message too short: %d bytes\n", len);
                 digitalWrite(ERROR_LED, HIGH);
                 delay(100);
                 digitalWrite(ERROR_LED, LOW);
@@ -302,7 +299,7 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
 
             String nmeaStr((const char *)(data + 3), len - 3);
             // nmeaStr.trim();  // Remove any trailing whitespace
-            //printf("%s\n", nmeaStr.c_str());
+            // printf("%s\n", nmeaStr.c_str());
             break;
         }
         default:
@@ -358,11 +355,11 @@ void Rover::pairingTask(void *arg) {
     self->stopPairing();
 }
 
-void Rover::sendDebugMessage(const String& message) {
+void Rover::sendDebugMessage(const String &message) {
     sendDebugMessage(message.c_str());
 }
 
-void Rover::sendDebugMessage(const char* message) {
+void Rover::sendDebugMessage(const char *message) {
     USBSerial.write(DEBUG_MAGIC_BYTE);
     USBSerial.print(message);
     USBSerial.print("\n");
