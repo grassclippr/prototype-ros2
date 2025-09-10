@@ -123,8 +123,8 @@ void UrosClient::urosTask(void *arg) {
 
             case AGENT_CONNECTED:
                 static unsigned long last_ping = 0;
-                // Check every 200ms if agent is still connected
-                if (millis() - last_ping > 200) {
+                // Check every 1000ms if agent is still connected
+                if (millis() - last_ping > 1000) {
                     last_ping = millis();
                     if (rmw_uros_ping_agent(300, 3) != RMW_RET_OK) {
                         printf("ping fail\n");
@@ -135,16 +135,11 @@ void UrosClient::urosTask(void *arg) {
                 // if (rmw_uros_ping_agent(300, 3) == RMW_RET_OK) {
                 if (rclc_executor_spin_some(&self->executor, RCL_MS_TO_NS(100)) != RCL_RET_OK) {
                     printf("spin fail\n");
-                    // self->state = AGENT_DISCONNECTED;
-                }
-                /*} else {
-                    printf("ping fail\n");
                     self->state = AGENT_DISCONNECTED;
-                }*/
-                // delay(200);
-                yield();
-                break;
+                }
 
+                vTaskDelay(10 / portTICK_PERIOD_MS);
+                break;
             case AGENT_DISCONNECTED:
                 self->destroy_entities();
                 self->state = WAITING_AGENT;

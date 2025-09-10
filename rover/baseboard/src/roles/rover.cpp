@@ -65,11 +65,11 @@ Rover::Rover() {
             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
             "baseboard");
 
-        /*rclc_publisher_init_default(
+        rclc_publisher_init_default(
             &nmea_publisher,
             node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(nmea_msgs, msg, Sentence),
-            "nmea_sentence");*/
+            "nmea_sentence");
 
         rclc_subscription_init_default(
             &cmd_vel_sub,
@@ -83,6 +83,7 @@ Rover::Rover() {
             support,
             RCL_MS_TO_NS(timer_timeout),
             [](rcl_timer_t *timer, int64_t last_call_time) {
+                printf("Timer callback\n");
                 RCSOFTCHECK(rcl_publish(&selfRover->publisher, &selfRover->msg, NULL));
                 selfRover->msg.data++;
             },

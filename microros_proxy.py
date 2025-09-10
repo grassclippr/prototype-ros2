@@ -408,7 +408,7 @@ class MicroROSProxy:
 
                         # If we got a valid frame, forward to ROS agent
                         if frame and 'payload' in frame:
-                            debug_print_bytes("RX frame", binary_buffer[frame_start:frame_end])
+                            #debug_print_bytes("RX frame", binary_buffer[frame_start:frame_end])
                             self.last_source = frame['source_addr']
                             self.last_remote = frame['remote_addr']
                             self._forward_to_agent(frame['payload'])
@@ -434,27 +434,39 @@ class MicroROSProxy:
 
     def _read_from_agent(self):
         """Read data from micro-ROS agent and forward to ESP32"""
+        buffer = bytearray()
         while self.running and self.agent_socket:
             try:
                 data = self.agent_socket.recv(1024)
                 if not data:
                     break
+                
+                buffer += data
 
 
-                # Forward agent data to ESP32
-                if self.esp32_serial:
-                    # Build frame as bytes for debug and atomic write
-                    frame = HDLCFrame.build(self.last_source, self.last_remote, data)
+                # Message is formated as 2 byte little-endian length prefix + payload
+                while len(buffer) >= 2:
+                    msg_len = int.from_bytes(buffer[0:2], 'little')
+                    if len(buffer) < 2 + msg_len:
+                        # Wait for more data
+                        break
+                    msg = buffer[:2 + msg_len]
+                    buffer = buffer[2 + msg_len:]
+                
+                    # Forward agent data to ESP32
+                    if self.esp32_serial:
+                        # Build frame as bytes for debug and atomic write
+                        frame = HDLCFrame.build(self.last_source, self.last_remote, msg)
 
-                    # Apply byte stuffing
-                    stuffed = FrameStuffing.stuff(frame)
+                        # Apply byte stuffing
+                        stuffed = FrameStuffing.stuff(frame)
 
-                    stuffed.insert(0, BEGIN_FLAG)
+                        stuffed.insert(0, BEGIN_FLAG)
 
-                    debug_print_bytes("TX frame", stuffed)
-                    self.esp32_serial.write(stuffed)
-                else:
-                    print("❌ No ESP32 connected to forward agent data")
+                        #debug_print_bytes("TX frame", stuffed)
+                        self.esp32_serial.write(stuffed)
+                    else:
+                        print("❌ No ESP32 connected to forward agent data")
             except TimeoutError:
                 continue
             except Exception as e:
