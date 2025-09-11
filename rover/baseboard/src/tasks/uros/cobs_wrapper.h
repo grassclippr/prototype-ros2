@@ -20,15 +20,7 @@ class CobsStream : public Stream {
     }
 
     size_t write(uint8_t byte) override {
-        base_stream.print("sending 1 byte\n");
-
-        // Apply COBS encoding
-        uint8_t encoded[6];  // 0x00, 0x00, data..., 0x00
-        encoded[0] = 0x00;   // Start marker
-        encoded[1] = 0x00;   // Start marker
-        size_t len = cobs_encode(&byte, 1, encoded + 2);
-        encoded[len + 2] = 0x00;  // End marker
-        return base_stream.write(encoded, len + 3);
+        return base_stream.write(byte);
     }
 
     size_t write(const uint8_t *buffer, size_t size) override {
@@ -43,8 +35,6 @@ class CobsStream : public Stream {
 
         return size;
     }
-
-    // Implement other Stream methods as needed...
 
    private:
     Stream &base_stream;

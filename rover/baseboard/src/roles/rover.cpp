@@ -83,7 +83,6 @@ Rover::Rover() {
             support,
             RCL_MS_TO_NS(timer_timeout),
             [](rcl_timer_t *timer, int64_t last_call_time) {
-                printf("Timer callback\n");
                 RCSOFTCHECK(rcl_publish(&selfRover->publisher, &selfRover->msg, NULL));
                 selfRover->msg.data++;
             },
@@ -91,7 +90,7 @@ Rover::Rover() {
     });
     uros_client.onExecutorInit([&](rclc_executor_t *executor) {
         // Add timer to executor
-        // RCCHECK(rclc_executor_add_timer(executor, &timer));
+        RCCHECK(rclc_executor_add_timer(executor, &timer));
 
         RCCHECK(rclc_executor_add_subscription(
             executor,
