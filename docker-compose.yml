@@ -34,7 +34,7 @@ services:
 
   # --- micro-ROS Agent (Proxy mode) ---
   micro_ros_agent:
-    image: microros/micro-ros-agent:jazzy
+    image: docker.io/microros/micro-ros-agent:jazzy
     container_name: micro_ros_agent
     networks:
       - micro_ros_net
