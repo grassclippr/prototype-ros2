@@ -487,20 +487,27 @@ class MicroROSProxy:
             print(f"❌ Error in _forward_to_agent: {e}")
 
 def main():
-    # Priority: CLI args > environment > defaults
-    esp32_port = os.environ.get("SERIAL_DEV", "/dev/ttyACM0")
-    proxy_port = int(os.environ.get("PROXY_PORT", "8888"))
-    baudrate = int(os.environ.get("BAUDRATE", "115200"))
+    import sys
+    import os
+    import argparse
 
-    # CLI overrides
-    if len(sys.argv) > 1:
-        esp32_port = sys.argv[1]
-    if len(sys.argv) > 2:
-        proxy_port = int(sys.argv[2])
-    if len(sys.argv) > 3:
-        baudrate = int(sys.argv[3])
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description='Micro-ROS Proxy for ESP32 Communication')
+    parser.add_argument('serial_dev', nargs='?', default=os.getenv('SERIAL_DEV', '/dev/ttyACM0'),
+                      help='Serial device (default: /dev/ttyACM0 or $SERIAL_DEV)')
+    parser.add_argument('proxy_port', nargs='?', type=int, default=int(os.getenv('PROXY_PORT', '8888')),
+                      help='TCP port for agent connection (default: 8888 or $PROXY_PORT)')
+    parser.add_argument('baudrate', nargs='?', type=int, default=int(os.getenv('BAUDRATE', '115200')),
+                      help='Serial baudrate (default: 115200 or $BAUDRATE)')
 
-    proxy = MicroROSProxy(esp32_port=esp32_port, esp32_baudrate=baudrate, agent_port=proxy_port)
+    args = parser.parse_args()
+
+    # Set configuration from arguments or environment variables
+    serial_dev = args.serial_dev
+    proxy_port = args.proxy_port
+    baudrate = args.baudrate
+
+    proxy = MicroROSProxy(esp32_port=serial_dev, esp32_baudrate=baudrate, agent_port=proxy_port)
     proxy.start()
 
 if __name__ == "__main__":
