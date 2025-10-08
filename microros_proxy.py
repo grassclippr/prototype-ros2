@@ -194,14 +194,6 @@ class HDLCFrame:
             }
         payload = bytes(unstuffed[4:4 + payload_len])
 
-        # Check that the payload does not contain BEGIN_FLAG
-        if BEGIN_FLAG in payload:
-            # Return the last_byte_index to allow caller to skip this invalid frame
-            return {
-                'last_byte_index': 4 + payload_len + 2,
-                'error': f"Invalid payload: contains BEGIN_FLAG"
-            }
-
         # CRC check payload integrity
         frame_crc = int.from_bytes(unstuffed[4 + payload_len:4 + payload_len + 2], 'little')
         calc_crc = HDLCFrame.crc16_ccitt(payload)
@@ -395,16 +387,30 @@ class MicroROSProxy:
 
                         frame_end = binary_buffer.find(b'\x7E', frame_start + 1)
                         if frame_end == -1:
-                            frame_end = len(binary_buffer)
+                            break
 
                         if frame_start > 0:
-                            debug_print_bytes("Discarding bytes before frame", binary_buffer[:frame_start])
-                            print(f"❌ Frame parse error: {last_error}")
+                            binary_buffer = binary_buffer[frame_start:]
+                            frame_start = 0
+                            continue
 
-                        frame = HDLCFrame.parse(binary_buffer[frame_start:frame_end])
+                        stuffed_frame = binary_buffer[:frame_end + 1]
+
+                        try:
+                            inner = FrameStuffing.unstuff(stuffed_frame[1:-1])
+                        except ValueError as e:
+                            last_error = f"Frame destuff error: {e}"
+                            print(f"❌ Frame parse error: {last_error}")
+                            binary_buffer = binary_buffer[frame_end + 1:]
+                            frame_start = 0
+                            continue
+
+                        frame = HDLCFrame.parse(b'\x7E' + bytes(inner))
                         if not frame:
                             print("❌ Failed to parse HDLC frame")
-                            break
+                            binary_buffer = binary_buffer[frame_end + 1:]
+                            frame_start = 0
+                            continue
 
                         # If we got a valid frame, forward to ROS agent
                         if frame and 'payload' in frame:
@@ -416,17 +422,14 @@ class MicroROSProxy:
                         if 'error' in frame:
                             last_error = frame['error']
                             #print(f"❌ Frame parse error: {frame['error']}")
-
-                        # Remove processed frame from buffer
-                        if 'last_byte_index' in frame:
-                            binary_buffer = binary_buffer[frame_start + frame['last_byte_index'] + 1:]
+                            binary_buffer = binary_buffer[frame_end + 1:]
                             frame_start = 0
-                        
-                        # No more complete frames in buffer
-                        if frame_end == len(binary_buffer):
-                            break
+                            continue
+                        else:
+                            last_error = None
 
-                        frame_start = frame_end
+                        binary_buffer = binary_buffer[frame_end + 1:]
+                        frame_start = 0
             except Exception as e:
                 print(f"❌ Error reading from ESP32: {e}")
                 break
