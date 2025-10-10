@@ -11,6 +11,11 @@ static Rover *selfRover = nullptr;
 Rover::Rover() {
     selfRover = this;
 
+    nmea_msgs__msg__Sentence__init(&selfRover->nmea_msg);
+    selfRover->nmea_msg.sentence.capacity = 100;  // 82 + 1;
+    selfRover->nmea_msg.sentence.data = (char *)malloc(selfRover->nmea_msg.sentence.capacity * sizeof(char));
+    selfRover->nmea_msg.sentence.size = 0;
+
     USBSerial.begin(115200);
     leds.setup();
     motors.setup();
@@ -89,10 +94,11 @@ Rover::Rover() {
             true);  // autostart = true
     });
     uros_client.onExecutorInit([&](rclc_executor_t *executor) {
+        selfRover->nmea_publisher_ready = true;
         // Add timer to executor
         RCCHECK(rclc_executor_add_timer(executor, &timer));
 
-        RCCHECK(rclc_executor_add_subscription(
+        /*RCCHECK(rclc_executor_add_subscription(
             executor,
             &cmd_vel_sub,
             &cmd_vel_msg,
@@ -124,13 +130,17 @@ Rover::Rover() {
                 // digitalWrite(LYNX_D_LED, right_motor_angular > 0 ? HIGH : LOW);
                 return;
             },
-            ON_NEW_DATA));
+            ON_NEW_DATA));*/
+
         return true;
     });
 
     // Cleanup when connection is lost
     uros_client.onDestroyEntities([&](rcl_node_t *node, rclc_support_t *support) {
+        selfRover->nmea_publisher_ready = false;
+
         RCSOFTCHECK(rcl_publisher_fini(&publisher, node));
+        RCSOFTCHECK(rcl_publisher_fini(&nmea_publisher, node));
         RCSOFTCHECK(rcl_timer_fini(&timer));
         RCSOFTCHECK(rcl_subscription_fini(&cmd_vel_sub, node));
     });
@@ -164,10 +174,6 @@ void Rover::gnssReceiveTask(void *arg) {
     // Serial2.print("$PQTMCFGMSGRATE,W,GGA,1,1*58\r\n");
     // Serial2.print("$PAIR062,0,1*3F\r\n");
     self->sendNmeaCommand("PAIR062,0,1");
-
-    self->nmea_msg.sentence.data = (char *)malloc(82 + 1 * sizeof(char));
-    self->nmea_msg.sentence.size = 0;
-    self->nmea_msg.sentence.capacity = 82 + 1;  // 82 is the maximum length of NMEA sentences, +1 for null terminator
 
     while (true) {
         if (Serial2.available() < 1) {
@@ -221,13 +227,13 @@ void Rover::gnssReceiveTask(void *arg) {
                     break;
                 }
 
-                // printf("%s\n", line.c_str());
-
                 if (line.length() <= 82 && self->uros_client.isConnected()) {
-                    /*memcpy(selfRover->nmea_msg.sentence.data, line.c_str(), line.length());
+                    memcpy(selfRover->nmea_msg.sentence.data, line.c_str(), line.length());
                     selfRover->nmea_msg.sentence.size = line.length();
 
-                    RCSOFTCHECK(rcl_publish(&selfRover->nmea_publisher, &selfRover->nmea_msg, NULL));*/
+                    if (selfRover->nmea_publisher_ready) {
+                        RCSOFTCHECK(rcl_publish(&selfRover->nmea_publisher, &selfRover->nmea_msg, NULL));
+                    }
                 }
                 break;
             }

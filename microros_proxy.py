@@ -374,6 +374,8 @@ class MicroROSProxy:
                         decoded = CobsCodec.decode(binary_frame)
                         binary_buffer += decoded
                     except DecodeError as e:
+                        debug_print_bytes("RX invalid COBS frame", buffer)
+                        print(f"start={start} end={end} len={len(binary_frame)}")
                         print(f"❌ COBS decode error: {e}")
                     
                     buffer = buffer[end + 1:]

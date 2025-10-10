@@ -32,6 +32,8 @@ class Rover {
     void sendNmeaCommand(const String &cmd);
 
     // ROS communication
+    bool nmea_publisher_ready = false;
+    
     rcl_timer_t timer;
     rcl_publisher_t publisher;
     std_msgs__msg__Int32 msg;
