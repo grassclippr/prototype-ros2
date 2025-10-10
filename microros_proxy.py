@@ -75,11 +75,26 @@ def debug_print_bytes(title: str, data: bytes):
     print(f"\033[32m{title}:\033[0m", end=' ')
     # Print bytes, highlight 0x00 in red
     byte_strs = []
-    for b in data:
+    i = 0
+    n = len(data)
+    while i < n:
+        b = data[i]
         if b == 0x7E:
             byte_strs.append(f"\033[31m{b:02X}\033[0m")
+            i += 1
+        elif b == 0x00:
+            # check for a 0x00 0x00 sequence
+            if i + 1 < n and data[i + 1] == 0x00:
+                # show the pair as a single highlighted token "00 00"
+                byte_strs.append(f"\033[35m{data[i]:02X} {data[i+1]:02X}[START]\033[0m")
+                i += 2
+            else:
+                # single zero highlighted differently
+                byte_strs.append(f"\033[32m{b:02X}[END]\033[0m")
+                i += 1
         else:
             byte_strs.append(f"{b:02X}")
+            i += 1
     print(' '.join(byte_strs))
 
 class DecodeError(Exception):
