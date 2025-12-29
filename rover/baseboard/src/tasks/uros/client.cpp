@@ -1,5 +1,9 @@
 #include <Arduino.h>
+
 #include "./client.h"
+#include "./serial_mux.h"
+#include "./serial_mux_debug.h"
+#include "./serial_mux_transport.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -48,7 +52,16 @@ void UrosClient::destroy_entities() {
 }
 
 void UrosClient::setup(Stream & stream) {
-    set_microros_serial_transports(stream);
+    static serial_mux::SerialMux mux(stream);
+    serial_mux::set_debug_mux(&mux);
+
+    rmw_uros_set_custom_transport(
+        true,
+        &mux,
+        serial_mux_transport_open,
+        serial_mux_transport_close,
+        serial_mux_transport_write,
+        serial_mux_transport_read);
 
     xTaskCreate(
         urosTask,

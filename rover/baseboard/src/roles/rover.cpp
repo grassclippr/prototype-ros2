@@ -1,6 +1,14 @@
 #include "./rover.h"
 
+#include "tasks/uros/serial_mux_debug.h"
+
+#define printf serial_mux::debug_printf
+
 #include "./espnow.h"
+
+#ifndef SERIAL_MUX_HEARTBEAT
+#define SERIAL_MUX_HEARTBEAT 1
+#endif
 
 constexpr float GEARBOX_RATIO = 30.0f;   // Example: 30:1 gearbox
 constexpr float WHEEL_RADIUS_M = 0.05f;  // 5 cm wheel radius
@@ -154,6 +162,16 @@ Rover::Rover() {
         this,
         1,
         nullptr);
+
+#if SERIAL_MUX_HEARTBEAT
+    xTaskCreate(
+        heartbeatTask,
+        "heartbeatTask",
+        2048,
+        this,
+        1,
+        &heartbeatTaskHandle);
+#endif
 };
 
 void Rover::gnssReceiveTask(void *arg) {
@@ -237,6 +255,18 @@ void Rover::gnssReceiveTask(void *arg) {
                 break;
         }
         yield();
+    }
+}
+
+void Rover::heartbeatTask(void *arg) {
+    Rover *self = (Rover *)arg;
+    (void)self;
+
+    uint32_t counter = 0;
+    while (true) {
+        printf("heartbeat %lu\n", static_cast<unsigned long>(counter));
+        counter++;
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 
