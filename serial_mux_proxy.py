@@ -221,7 +221,7 @@ class SerialMuxProxy:
     def _handle_frame(self, frame: Frame) -> None:
         if frame.frame_type == TYPE_ROS:
             self.stats["frames_ros"] += 1
-            print(f"[proxy] Received ROS frame: seq={frame.seq} msg_id={frame.msg_id} len={len(frame.payload)} flags={frame.flags}", flush=True)
+        # print(f"[proxy] Received ROS frame: seq={frame.seq} msg_id={frame.msg_id} len={len(frame.payload)} flags={frame.flags}", flush=True)
             self._handle_ros_frame(frame)
             return
 
@@ -346,7 +346,7 @@ class SerialMuxProxy:
                         break
                     payload = bytes(buffer[2:2 + msg_len])
                     buffer = buffer[2 + msg_len :]
-                    print(f"[proxy] Forwarding {len(payload)} bytes from agent to serial", flush=True)
+                    # print(f"[proxy] Forwarding {len(payload)} bytes from agent to serial", flush=True)
                     self._send_ros_to_serial(payload)
             except TimeoutError:
                 continue

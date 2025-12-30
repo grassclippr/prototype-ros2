@@ -24,3 +24,7 @@ flash-mux-no-debug:
 flash-mux-no-debug-skip-ping:
 	@. ~/.platformio/penv/bin/activate && \
 		PIO_BUILD_FLAGS="-DSERIAL_MUX_DEBUG_ENABLE=0 -DSERIAL_MUX_SKIP_PING=1" pio run -t upload -d $(PIO_PROJECT)
+
+.PHONY: ros
+ros:
+	@docker compose exec -T core bash -lc "source /opt/ros/jazzy/setup.bash && ros2 $(ARGS)"

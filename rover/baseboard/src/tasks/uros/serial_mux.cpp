@@ -31,47 +31,45 @@ void SerialMux::writeFrame(uint8_t frame_type, uint8_t flags, uint16_t msg_id, c
         xSemaphoreTake(write_mutex_, portMAX_DELAY);
     }
 
-    uint8_t raw[kMaxFrameLen];
     size_t idx = 0;
-    raw[idx++] = kMagic;
-    raw[idx++] = kVersion;
-    raw[idx++] = frame_type;
-    raw[idx++] = flags;
-    raw[idx++] = static_cast<uint8_t>(seq_ & 0xFF);
-    raw[idx++] = static_cast<uint8_t>((seq_ >> 8) & 0xFF);
-    raw[idx++] = static_cast<uint8_t>(msg_id & 0xFF);
-    raw[idx++] = static_cast<uint8_t>((msg_id >> 8) & 0xFF);
-    raw[idx++] = static_cast<uint8_t>(len & 0xFF);
-    raw[idx++] = static_cast<uint8_t>((len >> 8) & 0xFF);
+    raw_frame_buf_[idx++] = kMagic;
+    raw_frame_buf_[idx++] = kVersion;
+    raw_frame_buf_[idx++] = frame_type;
+    raw_frame_buf_[idx++] = flags;
+    raw_frame_buf_[idx++] = static_cast<uint8_t>(seq_ & 0xFF);
+    raw_frame_buf_[idx++] = static_cast<uint8_t>((seq_ >> 8) & 0xFF);
+    raw_frame_buf_[idx++] = static_cast<uint8_t>(msg_id & 0xFF);
+    raw_frame_buf_[idx++] = static_cast<uint8_t>((msg_id >> 8) & 0xFF);
+    raw_frame_buf_[idx++] = static_cast<uint8_t>(len & 0xFF);
+    raw_frame_buf_[idx++] = static_cast<uint8_t>((len >> 8) & 0xFF);
 
     if (len > 0) {
-        memcpy(raw + idx, payload, len);
+        memcpy(raw_frame_buf_ + idx, payload, len);
         idx += len;
     }
 
-    uint32_t crc = crc32(raw + 1, idx - 1);
-    raw[idx++] = static_cast<uint8_t>(crc & 0xFF);
-    raw[idx++] = static_cast<uint8_t>((crc >> 8) & 0xFF);
-    raw[idx++] = static_cast<uint8_t>((crc >> 16) & 0xFF);
-    raw[idx++] = static_cast<uint8_t>((crc >> 24) & 0xFF);
+    uint32_t crc = crc32(raw_frame_buf_ + 1, idx - 1);
+    raw_frame_buf_[idx++] = static_cast<uint8_t>(crc & 0xFF);
+    raw_frame_buf_[idx++] = static_cast<uint8_t>((crc >> 8) & 0xFF);
+    raw_frame_buf_[idx++] = static_cast<uint8_t>((crc >> 16) & 0xFF);
+    raw_frame_buf_[idx++] = static_cast<uint8_t>((crc >> 24) & 0xFF);
 
     seq_ = static_cast<uint16_t>(seq_ + 1u);
 
-    uint8_t encoded[kMaxFrameLen * 2 + 1];
     size_t enc_len = 0;
     for (size_t i = 0; i < idx; ++i) {
-        uint8_t b = raw[i];
+        uint8_t b = raw_frame_buf_[i];
         if (b == kEnd) {
-            encoded[enc_len++] = kEsc;
-            encoded[enc_len++] = kEscEnd;
+            encoded_frame_buf_[enc_len++] = kEsc;
+            encoded_frame_buf_[enc_len++] = kEscEnd;
         } else if (b == kEsc) {
-            encoded[enc_len++] = kEsc;
-            encoded[enc_len++] = kEscEsc;
+            encoded_frame_buf_[enc_len++] = kEsc;
+            encoded_frame_buf_[enc_len++] = kEscEsc;
         } else {
-            encoded[enc_len++] = b;
+            encoded_frame_buf_[enc_len++] = b;
         }
     }
-    encoded[enc_len++] = kEnd;
+    encoded_frame_buf_[enc_len++] = kEnd;
 
     size_t written = 0;
     while (written < enc_len) {
@@ -79,7 +77,7 @@ void SerialMux::writeFrame(uint8_t frame_type, uint8_t flags, uint16_t msg_id, c
             delay(1);
             continue;
         }
-        size_t chunk = stream_.write(encoded + written, enc_len - written);
+        size_t chunk = stream_.write(encoded_frame_buf_ + written, enc_len - written);
         if (chunk == 0) {
             delay(1);
             continue;

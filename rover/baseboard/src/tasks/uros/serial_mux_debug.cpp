@@ -25,7 +25,7 @@ int debug_printf(const char *fmt, ...) {
         return 0;
     }
 
-    char buffer[512];
+    char buffer[256];
     va_list args;
     va_start(args, fmt);
     int written = vsnprintf(buffer, sizeof(buffer), fmt, args);

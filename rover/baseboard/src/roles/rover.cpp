@@ -173,7 +173,7 @@ Rover::Rover() {
     xTaskCreate(
         heartbeatTask,
         "heartbeatTask",
-        2048,
+        4096,
         this,
         1,
         &heartbeatTaskHandle);

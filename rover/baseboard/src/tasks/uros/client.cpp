@@ -5,6 +5,9 @@
 #define SERIAL_MUX_ENABLE 1
 #endif
 
+#ifndef SERIAL_MUX_PACKET_MODE
+#define SERIAL_MUX_PACKET_MODE 1
+#endif
 #if SERIAL_MUX_ENABLE
 #include "./serial_mux.h"
 #include "./serial_mux_debug.h"
@@ -67,7 +70,7 @@ void UrosClient::setup(Stream & stream) {
     serial_mux::set_debug_mux(&mux);
 
     rmw_uros_set_custom_transport(
-        true,
+        SERIAL_MUX_PACKET_MODE ? false : true,
         &mux,
         serial_mux_transport_open,
         serial_mux_transport_close,
