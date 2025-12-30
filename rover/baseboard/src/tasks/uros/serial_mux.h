@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "freertos/semphr.h"
+
 namespace serial_mux {
 
 static constexpr uint8_t kEnd = 0xC0;
@@ -61,6 +63,7 @@ class SerialMux {
     size_t frame_len_ = 0;
     bool escape_ = false;
     bool drop_frame_ = false;
+    SemaphoreHandle_t write_mutex_ = nullptr;
 
     void writeFrame(uint8_t frame_type, uint8_t flags, uint16_t msg_id, const uint8_t *payload, size_t len);
 

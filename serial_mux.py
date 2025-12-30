@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional
+import zlib
 
 END = 0xC0
 ESC = 0xDB
@@ -34,6 +35,20 @@ class Frame:
     seq: int
     msg_id: int
     payload: bytes
+
+
+import threading
+
+
+class MuxWriter:
+    def __init__(self, stream) -> None:
+        self._stream = stream
+        self._lock = threading.Lock()
+
+    def write_bytes(self, payload: bytes) -> None:
+        with self._lock:
+            for b in payload:
+                self._stream.write(b)
 
 
 def slip_encode(data: bytes) -> bytes:
@@ -74,13 +89,7 @@ def slip_decode(data: bytes) -> Optional[bytes]:
 
 
 def crc32(data: bytes) -> int:
-    crc = 0xFFFFFFFF
-    for b in data:
-        crc ^= b
-        for _ in range(8):
-            mask = -(crc & 1)
-            crc = (crc >> 1) ^ (0xEDB88320 & mask)
-    return (~crc) & 0xFFFFFFFF
+    return zlib.crc32(data) & 0xFFFFFFFF
 
 
 def build_frame(frame_type: int, flags: int, seq: int, msg_id: int, payload: bytes) -> bytes:
@@ -102,12 +111,16 @@ def build_frame(frame_type: int, flags: int, seq: int, msg_id: int, payload: byt
 
 
 def parse_frame(decoded: bytes) -> Optional[Frame]:
+    return _parse_frame(decoded)[0]
+
+
+def _parse_frame(decoded: bytes) -> tuple[Optional[Frame], str]:
     if len(decoded) < MIN_FRAME_LEN:
-        return None
+        return None, "too_short"
     if decoded[0] != MAGIC:
-        return None
+        return None, "bad_magic"
     if decoded[1] != VERSION:
-        return None
+        return None, "bad_version"
 
     frame_type = decoded[2]
     flags = decoded[3]
@@ -116,21 +129,24 @@ def parse_frame(decoded: bytes) -> Optional[Frame]:
     length = int.from_bytes(decoded[8:10], "little")
 
     if length > MAX_PAYLOAD:
-        return None
+        return None, "length_too_large"
     expected_len = HEADER_LEN + length + CRC_LEN
     if len(decoded) != expected_len:
-        return None
+        return None, "length_mismatch"
 
     payload = decoded[10:10 + length]
     crc_read = int.from_bytes(decoded[10 + length:10 + length + 4], "little")
     crc_calc = crc32(decoded[1:10] + payload)
     if crc_calc != crc_read:
-        return None
+        return None, "crc_mismatch"
 
-    return Frame(
-        frame_type=frame_type,
-        flags=flags,
-        seq=seq,
-        msg_id=msg_id,
-        payload=payload,
+    return (
+        Frame(
+            frame_type=frame_type,
+            flags=flags,
+            seq=seq,
+            msg_id=msg_id,
+            payload=payload,
+        ),
+        "ok",
     )

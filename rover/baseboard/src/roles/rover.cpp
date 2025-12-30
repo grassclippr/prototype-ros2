@@ -10,6 +10,10 @@
 #define SERIAL_MUX_HEARTBEAT 1
 #endif
 
+#ifndef SERIAL_MUX_DISABLE_ROS
+#define SERIAL_MUX_DISABLE_ROS 0
+#endif
+
 constexpr float GEARBOX_RATIO = 30.0f;   // Example: 30:1 gearbox
 constexpr float WHEEL_RADIUS_M = 0.05f;  // 5 cm wheel radius
 constexpr float WHEEL_BASE_M = 0.20f;    // 20 cm distance between wheels
@@ -19,10 +23,12 @@ static Rover *selfRover = nullptr;
 Rover::Rover() {
     selfRover = this;
 
-    USBSerial.begin(115200);
+    USBSerial.begin(921600);
     leds.setup();
     motors.setup();
+#if !SERIAL_MUX_DISABLE_ROS
     uros_client.setup(USBSerial);
+#endif
 
     leds.bootButton.attachClick([]() {
         if (selfRover->pairingTaskHandle == nullptr) {

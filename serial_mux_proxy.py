@@ -22,6 +22,7 @@ from serial_mux import (
     TYPE_ROS,
     build_frame,
     parse_frame,
+    _parse_frame,
     slip_decode,
     MAX_PAYLOAD,
 )
@@ -50,7 +51,8 @@ class SerialMuxProxy:
         time_fn: Callable[[], float] = time.monotonic,
         reassembly_timeout: float = 1.0,
         max_reassembly_bytes: int = 4096,
-        max_raw_buffer_bytes: int = 8192,
+        max_raw_buffer_bytes: int = 65536,
+        stats_interval: float = 10.0,
     ) -> None:
         self.serial_dev = serial_dev
         self.baudrate = baudrate
@@ -60,6 +62,7 @@ class SerialMuxProxy:
         self.reassembly_timeout = reassembly_timeout
         self.max_reassembly_bytes = max_reassembly_bytes
         self.max_raw_buffer_bytes = max_raw_buffer_bytes
+        self.stats_interval = stats_interval
 
         self.serial_port: Optional[serial.Serial] = None
         self.agent_socket: Optional[socket.socket] = None
@@ -71,6 +74,22 @@ class SerialMuxProxy:
         self.ros_buffers: Dict[int, bytearray] = {}
         self.debug_timestamps: Dict[int, float] = {}
         self.ros_timestamps: Dict[int, float] = {}
+        self.stats = {
+            "raw_frames": 0,
+            "slip_decode_fail": 0,
+            "frame_parse_fail": 0,
+            "frame_parse_too_short": 0,
+            "frame_parse_bad_magic": 0,
+            "frame_parse_bad_version": 0,
+            "frame_parse_length_too_large": 0,
+            "frame_parse_length_mismatch": 0,
+            "frame_parse_crc_mismatch": 0,
+            "frames_ros": 0,
+            "frames_debug": 0,
+            "debug_reassembly_drop": 0,
+            "ros_reassembly_drop": 0,
+            "raw_buffer_drop": 0,
+        }
 
     def start(self) -> None:
         self.serial_port = serial.Serial(self.serial_dev, self.baudrate, timeout=0.1)
@@ -84,6 +103,10 @@ class SerialMuxProxy:
         self.running = True
         rx_thread = threading.Thread(target=self._read_from_serial, daemon=True)
         rx_thread.start()
+        stats_thread = None
+        if self.stats_interval > 0:
+            stats_thread = threading.Thread(target=self._stats_loop, daemon=True)
+            stats_thread.start()
 
         while self.running:
             try:
@@ -137,8 +160,6 @@ class SerialMuxProxy:
                 if not data:
                     continue
                 buffer.extend(data)
-                if len(buffer) > self.max_raw_buffer_bytes:
-                    buffer = self._cap_raw_buffer(buffer)
 
                 while True:
                     end_idx = buffer.find(bytes([END]))
@@ -150,27 +171,46 @@ class SerialMuxProxy:
                     if not raw_frame:
                         continue
 
+                    self.stats["raw_frames"] += 1
                     decoded = slip_decode(raw_frame)
                     if decoded is None:
+                        self.stats["slip_decode_fail"] += 1
                         continue
 
-                    frame = parse_frame(decoded)
+                    frame, reason = _parse_frame(decoded)
                     if frame is None:
+                        self.stats["frame_parse_fail"] += 1
+                        if reason == "too_short":
+                            self.stats["frame_parse_too_short"] += 1
+                        elif reason == "bad_magic":
+                            self.stats["frame_parse_bad_magic"] += 1
+                        elif reason == "bad_version":
+                            self.stats["frame_parse_bad_version"] += 1
+                        elif reason == "length_too_large":
+                            self.stats["frame_parse_length_too_large"] += 1
+                        elif reason == "length_mismatch":
+                            self.stats["frame_parse_length_mismatch"] += 1
+                        elif reason == "crc_mismatch":
+                            self.stats["frame_parse_crc_mismatch"] += 1
                         continue
 
                     self._handle_frame(frame)
+                if len(buffer) > self.max_raw_buffer_bytes:
+                    buffer = self._cap_raw_buffer(buffer)
             except Exception as exc:
                 print(f"Serial read error: {exc}")
                 break
 
     def _handle_frame(self, frame: Frame) -> None:
         if frame.frame_type == TYPE_ROS:
+            self.stats["frames_ros"] += 1
             self._handle_ros_frame(frame)
             return
 
         if frame.frame_type != TYPE_DEBUG:
             return
 
+        self.stats["frames_debug"] += 1
         flags = frame.flags
         if flags & FLAG_CHUNKED:
             self._prune_expired(self.debug_buffers, self.debug_timestamps)
@@ -185,6 +225,7 @@ class SerialMuxProxy:
             if len(self.debug_buffers[msg_id]) > self.max_reassembly_bytes:
                 self.debug_buffers.pop(msg_id, None)
                 self.debug_timestamps.pop(msg_id, None)
+                self.stats["debug_reassembly_drop"] += 1
                 return
             if flags & FLAG_CHUNK_END:
                 data = bytes(self.debug_buffers.pop(msg_id, bytearray()))
@@ -212,6 +253,7 @@ class SerialMuxProxy:
             if len(self.ros_buffers[msg_id]) > self.max_reassembly_bytes:
                 self.ros_buffers.pop(msg_id, None)
                 self.ros_timestamps.pop(msg_id, None)
+                self.stats["ros_reassembly_drop"] += 1
                 return
             if flags & FLAG_CHUNK_END:
                 payload = bytes(self.ros_buffers.pop(msg_id, bytearray()))
@@ -233,7 +275,10 @@ class SerialMuxProxy:
     def _cap_raw_buffer(self, buffer: bytearray) -> bytearray:
         last_end = buffer.rfind(bytes([END]))
         if last_end == -1:
+            self.stats["raw_buffer_drop"] += 1
             return bytearray()
+        if last_end + 1 < len(buffer):
+            self.stats["raw_buffer_drop"] += 1
         return buffer[last_end + 1 :]
 
     def _prune_expired(self, buffers: Dict[int, bytearray], timestamps: Dict[int, float]) -> None:
@@ -244,6 +289,14 @@ class SerialMuxProxy:
         for msg_id in expired:
             buffers.pop(msg_id, None)
             timestamps.pop(msg_id, None)
+
+    def _stats_loop(self) -> None:
+        while self.running:
+            time.sleep(self.stats_interval)
+            if not self.running:
+                break
+            stats = " ".join(f"{k}={v}" for k, v in self.stats.items())
+            print(f"[proxy-stats] {stats}", flush=True)
 
     def _read_from_agent(self) -> None:
         if not self.agent_socket:
@@ -264,6 +317,8 @@ class SerialMuxProxy:
                     payload = bytes(buffer[2:2 + msg_len])
                     buffer = buffer[2 + msg_len :]
                     self._send_ros_to_serial(payload)
+            except TimeoutError:
+                continue
             except Exception as exc:
                 print(f"Agent read error: {exc}")
                 break
@@ -306,6 +361,7 @@ def main() -> None:
     parser.add_argument("agent_port", nargs="?", type=int, default=8888)
     parser.add_argument("baudrate", nargs="?", type=int, default=115200)
     parser.add_argument("--agent-host", default="127.0.0.1")
+    parser.add_argument("--stats-interval", type=float, default=10.0)
 
     args = parser.parse_args()
 
@@ -314,6 +370,7 @@ def main() -> None:
         baudrate=args.baudrate,
         agent_host=args.agent_host,
         agent_port=args.agent_port,
+        stats_interval=args.stats_interval,
     )
     try:
         proxy.start()

@@ -6,7 +6,9 @@
 
 namespace serial_mux {
 
-SerialMux::SerialMux(Stream &stream) : stream_(stream) {}
+SerialMux::SerialMux(Stream &stream) : stream_(stream) {
+    write_mutex_ = xSemaphoreCreateMutex();
+}
 
 uint32_t SerialMux::crc32(const uint8_t *data, size_t len) {
     uint32_t crc = 0xFFFFFFFF;
@@ -23,6 +25,10 @@ uint32_t SerialMux::crc32(const uint8_t *data, size_t len) {
 void SerialMux::writeFrame(uint8_t frame_type, uint8_t flags, uint16_t msg_id, const uint8_t *payload, size_t len) {
     if (len > kMaxPayload) {
         return;
+    }
+
+    if (write_mutex_ != nullptr) {
+        xSemaphoreTake(write_mutex_, portMAX_DELAY);
     }
 
     uint8_t raw[kMaxFrameLen];
@@ -64,7 +70,10 @@ void SerialMux::writeFrame(uint8_t frame_type, uint8_t flags, uint16_t msg_id, c
         }
     }
     stream_.write(kEnd);
-    stream_.flush();
+
+    if (write_mutex_ != nullptr) {
+        xSemaphoreGive(write_mutex_);
+    }
 }
 
 size_t SerialMux::writeRos(const uint8_t *data, size_t len) {
