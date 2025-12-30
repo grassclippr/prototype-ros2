@@ -57,19 +57,35 @@ void SerialMux::writeFrame(uint8_t frame_type, uint8_t flags, uint16_t msg_id, c
 
     seq_ = static_cast<uint16_t>(seq_ + 1u);
 
+    uint8_t encoded[kMaxFrameLen * 2 + 1];
+    size_t enc_len = 0;
     for (size_t i = 0; i < idx; ++i) {
         uint8_t b = raw[i];
         if (b == kEnd) {
-            stream_.write(kEsc);
-            stream_.write(kEscEnd);
+            encoded[enc_len++] = kEsc;
+            encoded[enc_len++] = kEscEnd;
         } else if (b == kEsc) {
-            stream_.write(kEsc);
-            stream_.write(kEscEsc);
+            encoded[enc_len++] = kEsc;
+            encoded[enc_len++] = kEscEsc;
         } else {
-            stream_.write(b);
+            encoded[enc_len++] = b;
         }
     }
-    stream_.write(kEnd);
+    encoded[enc_len++] = kEnd;
+
+    size_t written = 0;
+    while (written < enc_len) {
+        if (stream_.availableForWrite() == 0) {
+            delay(1);
+            continue;
+        }
+        size_t chunk = stream_.write(encoded + written, enc_len - written);
+        if (chunk == 0) {
+            delay(1);
+            continue;
+        }
+        written += chunk;
+    }
 
     if (write_mutex_ != nullptr) {
         xSemaphoreGive(write_mutex_);

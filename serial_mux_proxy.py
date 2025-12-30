@@ -39,6 +39,12 @@ def _dump_debug(data: bytes) -> None:
     hex_str = " ".join(f"{b:02X}" for b in data)
     print(f"[DEBUG] {hex_str}")
 
+def _hexdump(data: bytes, max_len: int = 64) -> str:
+    if not data:
+        return ""
+    trimmed = data[:max_len]
+    return " ".join(f"{b:02X}" for b in trimmed)
+
 
 class SerialMuxProxy:
     def __init__(
@@ -53,6 +59,8 @@ class SerialMuxProxy:
         max_reassembly_bytes: int = 4096,
         max_raw_buffer_bytes: int = 65536,
         stats_interval: float = 10.0,
+        dump_ros: int = 0,
+        dump_bad_frames: int = 0,
     ) -> None:
         self.serial_dev = serial_dev
         self.baudrate = baudrate
@@ -63,6 +71,8 @@ class SerialMuxProxy:
         self.max_reassembly_bytes = max_reassembly_bytes
         self.max_raw_buffer_bytes = max_raw_buffer_bytes
         self.stats_interval = stats_interval
+        self.dump_ros = dump_ros
+        self.dump_bad_frames = dump_bad_frames
 
         self.serial_port: Optional[serial.Serial] = None
         self.agent_socket: Optional[socket.socket] = None
@@ -90,6 +100,7 @@ class SerialMuxProxy:
             "ros_reassembly_drop": 0,
             "raw_buffer_drop": 0,
         }
+        self.ros_len_hist: Dict[int, int] = {}
 
     def start(self) -> None:
         self.serial_port = serial.Serial(self.serial_dev, self.baudrate, timeout=0.1)
@@ -192,6 +203,12 @@ class SerialMuxProxy:
                             self.stats["frame_parse_length_mismatch"] += 1
                         elif reason == "crc_mismatch":
                             self.stats["frame_parse_crc_mismatch"] += 1
+                        if self.dump_bad_frames > 0:
+                            print(
+                                f"[proxy] Bad frame reason={reason} decoded_len={len(decoded)} hex={_hexdump(decoded)}",
+                                flush=True,
+                            )
+                            self.dump_bad_frames -= 1
                         continue
 
                     self._handle_frame(frame)
@@ -204,6 +221,7 @@ class SerialMuxProxy:
     def _handle_frame(self, frame: Frame) -> None:
         if frame.frame_type == TYPE_ROS:
             self.stats["frames_ros"] += 1
+            print(f"[proxy] Received ROS frame: seq={frame.seq} msg_id={frame.msg_id} len={len(frame.payload)} flags={frame.flags}", flush=True)
             self._handle_ros_frame(frame)
             return
 
@@ -238,6 +256,14 @@ class SerialMuxProxy:
     def _handle_ros_frame(self, frame: Frame) -> None:
         if not self.agent_socket:
             return
+
+        self.ros_len_hist[len(frame.payload)] = self.ros_len_hist.get(len(frame.payload), 0) + 1
+        if self.dump_ros > 0:
+            print(
+                f"[proxy] ROS payload len={len(frame.payload)} hex={_hexdump(frame.payload)}",
+                flush=True,
+            )
+            self.dump_ros -= 1
 
         flags = frame.flags
         if flags & FLAG_CHUNKED:
@@ -296,6 +322,9 @@ class SerialMuxProxy:
             if not self.running:
                 break
             stats = " ".join(f"{k}={v}" for k, v in self.stats.items())
+            if self.ros_len_hist:
+                ros_lens = ",".join(f"{k}:{v}" for k, v in sorted(self.ros_len_hist.items()))
+                stats = f"{stats} ros_len_hist={ros_lens}"
             print(f"[proxy-stats] {stats}", flush=True)
 
     def _read_from_agent(self) -> None:
@@ -308,6 +337,7 @@ class SerialMuxProxy:
                 data = self.agent_socket.recv(1024)
                 if not data:
                     break
+                # print(f"[proxy] Read {len(data)} bytes from agent", flush=True)
                 buffer.extend(data)
 
                 while len(buffer) >= 2:
@@ -316,6 +346,7 @@ class SerialMuxProxy:
                         break
                     payload = bytes(buffer[2:2 + msg_len])
                     buffer = buffer[2 + msg_len :]
+                    print(f"[proxy] Forwarding {len(payload)} bytes from agent to serial", flush=True)
                     self._send_ros_to_serial(payload)
             except TimeoutError:
                 continue
@@ -353,6 +384,7 @@ class SerialMuxProxy:
             )
             self.seq = (self.seq + 1) & 0xFFFF
             self.serial_port.write(frame)
+            # print(f"[proxy] Wrote frame to serial: seq={self.seq} len={len(frame)}", flush=True)
 
 
 def main() -> None:
@@ -362,6 +394,8 @@ def main() -> None:
     parser.add_argument("baudrate", nargs="?", type=int, default=115200)
     parser.add_argument("--agent-host", default="127.0.0.1")
     parser.add_argument("--stats-interval", type=float, default=10.0)
+    parser.add_argument("--dump-ros", type=int, default=0, help="Hex dump first N ROS payloads.")
+    parser.add_argument("--dump-bad-frames", type=int, default=0, help="Hex dump first N bad frames.")
 
     args = parser.parse_args()
 
@@ -371,6 +405,8 @@ def main() -> None:
         agent_host=args.agent_host,
         agent_port=args.agent_port,
         stats_interval=args.stats_interval,
+        dump_ros=args.dump_ros,
+        dump_bad_frames=args.dump_bad_frames,
     )
     try:
         proxy.start()
