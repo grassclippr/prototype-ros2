@@ -103,52 +103,77 @@ class SerialMuxProxy:
         self.ros_len_hist: Dict[int, int] = {}
 
     def start(self) -> None:
-        self.serial_port = serial.Serial(self.serial_dev, self.baudrate, timeout=0.1)
         print(f"Serial mux proxy started")
         print(f"Serial device: {self.serial_dev} @ {self.baudrate}")
         print(f"Agent: {self.agent_host}:{self.agent_port}")
 
-        reconnect_delay = 1.0
-        reconnect_max = 30.0
-
         self.running = True
-        rx_thread = threading.Thread(target=self._read_from_serial, daemon=True)
-        rx_thread.start()
-        stats_thread = None
         if self.stats_interval > 0:
             stats_thread = threading.Thread(target=self._stats_loop, daemon=True)
             stats_thread.start()
 
+        reconnect_delay = 1.0
+        reconnect_max = 30.0
+
         while self.running:
+            # 1. Open Serial
             try:
-                print("Connecting to micro-ROS agent...")
-                self.agent_socket = socket.create_connection((self.agent_host, self.agent_port), timeout=10)
-                print("Agent connected")
-
-                tx_thread = threading.Thread(target=self._read_from_agent, daemon=True)
-                tx_thread.start()
-
-                while self.running and tx_thread.is_alive():
-                    time.sleep(0.2)
-
-                if not self.running:
-                    break
-
-                if self.agent_socket:
-                    try:
-                        self.agent_socket.close()
-                    except Exception:
-                        pass
-                    self.agent_socket = None
-
-                print(f"Agent disconnected, reconnecting in {reconnect_delay:.1f}s")
-            except KeyboardInterrupt:
-                break
+                self.serial_port = serial.Serial(self.serial_dev, self.baudrate, timeout=0.1)
+                print(f"Serial port {self.serial_dev} opened")
             except Exception as exc:
-                print(f"Agent connection error: {exc}. Retrying in {reconnect_delay:.1f}s")
+                print(f"Serial open error: {exc}. Retrying in 1s...")
+                time.sleep(1.0)
+                continue
 
-            time.sleep(reconnect_delay)
-            reconnect_delay = min(reconnect_max, reconnect_delay * 2)
+            # 2. Start RX thread
+            rx_thread = threading.Thread(target=self._read_from_serial, daemon=True)
+            rx_thread.start()
+
+            # 3. Agent Loop
+            while self.running and rx_thread.is_alive():
+                try:
+                    print("Connecting to micro-ROS agent...")
+                    self.agent_socket = socket.create_connection((self.agent_host, self.agent_port), timeout=10)
+                    print("Agent connected")
+
+                    tx_thread = threading.Thread(target=self._read_from_agent, daemon=True)
+                    tx_thread.start()
+
+                    while self.running and rx_thread.is_alive() and tx_thread.is_alive():
+                        time.sleep(0.2)
+
+                    if self.agent_socket:
+                        try:
+                            self.agent_socket.close()
+                        except Exception:
+                            pass
+                        self.agent_socket = None
+
+                    if not rx_thread.is_alive():
+                        print("Serial RX thread died, restarting serial...")
+                        break
+
+                    print(f"Agent disconnected, reconnecting in {reconnect_delay:.1f}s")
+                except KeyboardInterrupt:
+                    self.running = False
+                    break
+                except Exception as exc:
+                    print(f"Agent connection error: {exc}. Retrying in {reconnect_delay:.1f}s")
+
+                if self.running and rx_thread.is_alive():
+                    time.sleep(reconnect_delay)
+                    reconnect_delay = min(reconnect_max, reconnect_delay * 2)
+
+            # Cleanup Serial
+            if self.serial_port:
+                try:
+                    self.serial_port.close()
+                except Exception:
+                    pass
+                self.serial_port = None
+            
+            # Reset agent backoff
+            reconnect_delay = 1.0
 
         self.stop()
 

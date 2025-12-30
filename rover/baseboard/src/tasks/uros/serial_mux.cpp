@@ -197,11 +197,17 @@ size_t SerialMux::readRos(uint8_t *data, size_t len, int timeout_ms) {
             break;
         }
 
-        if (!fillRosFromSerial(timeout_ms)) {
-            break;
+        int remaining_ms = -1;
+        if (timeout_ms >= 0) {
+            unsigned long elapsed = millis() - start;
+            if (elapsed >= static_cast<unsigned long>(timeout_ms)) {
+                remaining_ms = 0;
+            } else {
+                remaining_ms = timeout_ms - elapsed;
+            }
         }
 
-        if (timeout_ms >= 0 && millis() - start >= static_cast<unsigned long>(timeout_ms)) {
+        if (!fillRosFromSerial(remaining_ms)) {
             break;
         }
     }
@@ -211,63 +217,67 @@ size_t SerialMux::readRos(uint8_t *data, size_t len, int timeout_ms) {
 
 bool SerialMux::fillRosFromSerial(int timeout_ms) {
     unsigned long start = millis();
-    while (timeout_ms < 0 || millis() - start < static_cast<unsigned long>(timeout_ms)) {
-        if (!stream_.available()) {
+    do {
+        if (stream_.available()) {
+            int raw = stream_.read();
+            if (raw >= 0) {
+                uint8_t byte = static_cast<uint8_t>(raw);
+                if (byte == kEnd) {
+                    if (frame_len_ == 0) {
+                        resetFrame();
+                        continue;
+                    }
+                    bool got_ros = (!drop_frame_) && processFrame();
+                    resetFrame();
+                    if (got_ros) {
+                        return true;
+                    }
+                    continue;
+                }
+
+                if (drop_frame_) {
+                    continue;
+                }
+
+                if (frame_len_ == 0 && frame_start_ms_ == 0) {
+                    frame_start_ms_ = millis();
+                }
+
+                if (escape_) {
+                    escape_ = false;
+                    if (byte == kEscEnd) {
+                        byte = kEnd;
+                    } else if (byte == kEscEsc) {
+                        byte = kEsc;
+                    } else {
+                        drop_frame_ = true;
+                        continue;
+                    }
+                    appendDecoded(byte);
+                    continue;
+                }
+
+                if (byte == kEsc) {
+                    escape_ = true;
+                    continue;
+                }
+
+                appendDecoded(byte);
+            }
+        } else {
+            if (timeout_ms == 0) {
+                return false;
+            }
+            if (timeout_ms > 0 && millis() - start >= static_cast<unsigned long>(timeout_ms)) {
+                return false;
+            }
             delay(1);
-            continue;
         }
 
-        int raw = stream_.read();
-        if (raw < 0) {
-            continue;
+        if (timeout_ms > 0 && millis() - start >= static_cast<unsigned long>(timeout_ms)) {
+            return false;
         }
-        uint8_t byte = static_cast<uint8_t>(raw);
-
-        if (byte == kEnd) {
-            if (frame_len_ == 0) {
-                resetFrame();
-                continue;
-            }
-
-            bool got_ros = (!drop_frame_) && processFrame();
-            resetFrame();
-            if (got_ros) {
-                return true;
-            }
-            continue;
-        }
-
-        if (drop_frame_) {
-            continue;
-        }
-
-        if (frame_len_ == 0 && frame_start_ms_ == 0) {
-            frame_start_ms_ = millis();
-        }
-
-        if (escape_) {
-            escape_ = false;
-            if (byte == kEscEnd) {
-                byte = kEnd;
-            } else if (byte == kEscEsc) {
-                byte = kEsc;
-            } else {
-                drop_frame_ = true;
-                continue;
-            }
-            appendDecoded(byte);
-            continue;
-        }
-
-        if (byte == kEsc) {
-            escape_ = true;
-            continue;
-        }
-
-        appendDecoded(byte);
-    }
-
-    return false;
+    } while (true);
 }
 
 void SerialMux::resetFrame() {
