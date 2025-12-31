@@ -28,3 +28,7 @@ flash-mux-no-debug-skip-ping:
 .PHONY: ros
 ros:
 	@docker compose exec -T core bash -lc "source /opt/ros/jazzy/setup.bash && ros2 $(ARGS)"
+
+.PHONY: e2e
+e2e: flash
+	@./scripts/manual_e2e.sh

@@ -201,10 +201,9 @@ size_t SerialMux::readRos(uint8_t *data, size_t len, int timeout_ms) {
         if (timeout_ms >= 0) {
             unsigned long elapsed = millis() - start;
             if (elapsed >= static_cast<unsigned long>(timeout_ms)) {
-                remaining_ms = 0;
-            } else {
-                remaining_ms = timeout_ms - elapsed;
+                break;
             }
+            remaining_ms = timeout_ms - elapsed;
         }
 
         if (!fillRosFromSerial(remaining_ms)) {
@@ -218,6 +217,10 @@ size_t SerialMux::readRos(uint8_t *data, size_t len, int timeout_ms) {
 bool SerialMux::fillRosFromSerial(int timeout_ms) {
     unsigned long start = millis();
     do {
+        if (timeout_ms >= 0 && millis() - start >= static_cast<unsigned long>(timeout_ms)) {
+            return false;
+        }
+
         if (stream_.available()) {
             int raw = stream_.read();
             if (raw >= 0) {
@@ -268,14 +271,7 @@ bool SerialMux::fillRosFromSerial(int timeout_ms) {
             if (timeout_ms == 0) {
                 return false;
             }
-            if (timeout_ms > 0 && millis() - start >= static_cast<unsigned long>(timeout_ms)) {
-                return false;
-            }
             delay(1);
-        }
-
-        if (timeout_ms > 0 && millis() - start >= static_cast<unsigned long>(timeout_ms)) {
-            return false;
         }
     } while (true);
 }

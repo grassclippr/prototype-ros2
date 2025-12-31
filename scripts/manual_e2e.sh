@@ -5,6 +5,7 @@ BAUDRATE="${BAUDRATE:-921600}"
 SERIAL_DEV="${SERIAL_DEV:-/dev/ttyACM0}"
 HEARTBEAT_TIMEOUT="${HEARTBEAT_TIMEOUT:-15}"
 ROS_TIMEOUT="${ROS_TIMEOUT:-10}"
+BASEBOARD_TIMEOUT="${BASEBOARD_TIMEOUT:-15}"
 
 if ! command -v rg >/dev/null 2>&1; then
   echo "error: rg is required for this script" >&2
@@ -27,7 +28,14 @@ if ! timeout "${HEARTBEAT_TIMEOUT}s" sh -c \
 fi
 
 echo "Checking /baseboard ROS data (timeout: ${ROS_TIMEOUT}s)..."
-if ! timeout "${ROS_TIMEOUT}s" make ros ARGS="topic echo /baseboard --once" | rg -m1 '^data:'; then
+echo "Waiting for /baseboard topic (timeout: ${BASEBOARD_TIMEOUT}s)..."
+if ! timeout "${BASEBOARD_TIMEOUT}s" sh -c 'make ros ARGS="topic list -t" | rg -m1 "^/baseboard "'; then
+  echo "error: /baseboard topic not found" >&2
+  exit 1
+fi
+
+echo "Checking /baseboard ROS data (timeout: ${ROS_TIMEOUT}s)..."
+if ! timeout "${ROS_TIMEOUT}s" sh -c 'make ros ARGS="topic echo /baseboard --once" | rg -m1 "^data:"'; then
   echo "error: no /baseboard data received" >&2
   exit 1
 fi
