@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import random
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -106,11 +104,13 @@ def test_crc_rejects_tampered(payload: bytes, seq: int) -> None:
     assert frame is None
 
 
-@given(st.binary(min_size=1, max_size=MAX_PAYLOAD))
+@given(
+    payload=st.binary(min_size=1, max_size=MAX_PAYLOAD),
+    noise=st.binary(min_size=1, max_size=16),
+)
 @settings(max_examples=200)
-def test_resync_with_noise(payload: bytes) -> None:
+def test_resync_with_noise(payload: bytes, noise: bytes) -> None:
     frame = build_frame(TYPE_ROS, 0, 1, 0, payload)
-    noise = os.urandom(random.randint(1, 16))
     stream = noise + bytes([END]) + frame + noise + bytes([END]) + frame
     frames = _scan_frames(stream)
     assert len(frames) >= 1
