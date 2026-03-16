@@ -194,6 +194,9 @@ class SerialMuxProxy:
             try:
                 data = self.serial_port.read(self.serial_port.in_waiting or 1)
                 if not data:
+                    if buffer:
+                        _dump_debug(bytes(buffer))
+                        buffer.clear()
                     continue
                 buffer.extend(data)
 
@@ -211,6 +214,7 @@ class SerialMuxProxy:
                     decoded = slip_decode(raw_frame)
                     if decoded is None:
                         self.stats["slip_decode_fail"] += 1
+                        _dump_debug(raw_frame)
                         continue
 
                     frame, reason = _parse_frame(decoded)
@@ -234,11 +238,13 @@ class SerialMuxProxy:
                                 flush=True,
                             )
                             self.dump_bad_frames -= 1
+                        _dump_debug(raw_frame)
                         continue
 
                     self._handle_frame(frame)
                 if len(buffer) > self.max_raw_buffer_bytes:
-                    buffer = self._cap_raw_buffer(buffer)
+                    _dump_debug(bytes(buffer))
+                    buffer.clear()
             except Exception as exc:
                 print(f"Serial read error: {exc}")
                 break
@@ -322,15 +328,6 @@ class SerialMuxProxy:
             self.agent_socket.sendall(length_prefix + payload)
         except Exception as exc:
             print(f"Agent send error: {exc}")
-
-    def _cap_raw_buffer(self, buffer: bytearray) -> bytearray:
-        last_end = buffer.rfind(bytes([END]))
-        if last_end == -1:
-            self.stats["raw_buffer_drop"] += 1
-            return bytearray()
-        if last_end + 1 < len(buffer):
-            self.stats["raw_buffer_drop"] += 1
-        return buffer[last_end + 1 :]
 
     def _prune_expired(self, buffers: Dict[int, bytearray], timestamps: Dict[int, float]) -> None:
         if self.reassembly_timeout <= 0:

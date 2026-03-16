@@ -54,10 +54,12 @@
 - Read until END to get a candidate frame.
 - SLIP-decode; if decode fails, drop and resync.
 - Validate Magic, Version, Length, CRC32.
-- Drop invalid frames without affecting sync (END delimiter restores framing).
+- If a frame is invalid (fails SLIP decode, bad magic, bad CRC, etc.), the receiver SHOULD attempt to decode the raw bytes as UTF-8 text and print them. This preserves hardware crash dumps and unstructured text output.
+- Data received between END delimiters that successfully decodes is processed normally.
 
 ## Sender Behavior
-- MUST frame all bytes; no raw output on UART.
+- MUST prepend and append an END byte to every structured frame.
+- Prepending an END byte ensures the receiver discards any preceding raw text (e.g. from a bootloader or crash) and cleanly synchronizes to the start of the new frame.
 - MUST compute CRC and Length correctly.
 - SHOULD increment Seq for each frame.
 

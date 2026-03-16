@@ -76,31 +76,3 @@ def test_debug_chunk_overflow_discards() -> None:
     proxy._handle_frame(_frame(TYPE_DEBUG, FLAG_CHUNKED | FLAG_CHUNK_END, msg_id, b"ef"))
 
     assert msg_id not in proxy.debug_buffers
-
-
-def test_raw_buffer_cap_drops_noise() -> None:
-    proxy = SerialMuxProxy(
-        serial_dev="/dev/null",
-        baudrate=115200,
-        agent_host="127.0.0.1",
-        agent_port=8888,
-        max_raw_buffer_bytes=4,
-    )
-
-    buf = bytearray(b"abcdef")
-    capped = proxy._cap_raw_buffer(buf)
-    assert capped == bytearray()
-
-
-def test_raw_buffer_cap_keeps_tail_after_end() -> None:
-    proxy = SerialMuxProxy(
-        serial_dev="/dev/null",
-        baudrate=115200,
-        agent_host="127.0.0.1",
-        agent_port=8888,
-        max_raw_buffer_bytes=4,
-    )
-
-    buf = bytearray(b"ab\xC0cd")
-    capped = proxy._cap_raw_buffer(buf)
-    assert capped == bytearray(b"cd")

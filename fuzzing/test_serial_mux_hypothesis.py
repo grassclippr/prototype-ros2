@@ -63,7 +63,7 @@ def _reassemble(frames: list[Frame]) -> list[bytes]:
 def test_slip_roundtrip(data: bytes) -> None:
     encoded = slip_encode(data)
     assert encoded.endswith(bytes([END]))
-    decoded = slip_decode(encoded[:-1])
+    decoded = slip_decode(encoded[1:-1])
     assert decoded == data
 
 
@@ -77,7 +77,7 @@ def test_slip_roundtrip(data: bytes) -> None:
 @settings(max_examples=200)
 def test_frame_roundtrip(payload: bytes, seq: int, msg_id: int, frame_type: int, flags: int) -> None:
     encoded = build_frame(frame_type, flags, seq, msg_id, payload)
-    decoded = slip_decode(encoded[:-1])
+    decoded = slip_decode(encoded[1:-1])
     assert decoded is not None
     frame = parse_frame(decoded)
     assert frame is not None
@@ -131,7 +131,7 @@ def test_chunk_reassembly(payload: bytes) -> None:
         if offset + len(chunk) >= len(payload):
             flags |= 0x04
         encoded = build_frame(TYPE_DEBUG, flags, 1, msg_id, chunk)
-        decoded = slip_decode(encoded[:-1])
+        decoded = slip_decode(encoded[1:-1])
         assert decoded is not None
         frame = parse_frame(decoded)
         assert frame is not None

@@ -57,6 +57,7 @@ void SerialMux::writeFrame(uint8_t frame_type, uint8_t flags, uint16_t msg_id, c
     seq_ = static_cast<uint16_t>(seq_ + 1u);
 
     size_t enc_len = 0;
+    encoded_frame_buf_[enc_len++] = kEnd;
     for (size_t i = 0; i < idx; ++i) {
         uint8_t b = raw_frame_buf_[i];
         if (b == kEnd) {

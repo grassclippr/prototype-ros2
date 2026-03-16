@@ -53,6 +53,7 @@ class MuxWriter:
 
 def slip_encode(data: bytes) -> bytes:
     encoded = bytearray()
+    encoded.append(END)
     for b in data:
         if b == END:
             encoded.append(ESC)
