@@ -9,7 +9,7 @@
 CobsStream cobs_stream(USBSerial);
 
 void UrosClient::reportNewState(ClientState new_state) {
-    state = new_state;
+    state.store(new_state);
     for (auto &callback : state_change_callbacks) {
         callback(new_state);
     }
@@ -93,21 +93,22 @@ void UrosClient::urosTask(void *arg) {
 
     TickType_t xLastWakeTime = xTaskGetTickCount();
     while (1) {
-        xTaskDelayUntil(&xLastWakeTime, 10 / portTICK_RATE_MS);
+        xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10));
 
-        static int previous_state = AGENT_DISCONNECTED;
-        if (previous_state != self->state) {
-            self->reportNewState(self->state);
-            previous_state = self->state;
-            printf("state %d\n", self->state);
+        static ClientState previous_state = AGENT_DISCONNECTED;
+        ClientState current_state = self->state.load();
+        if (previous_state != current_state) {
+            self->reportNewState(current_state);
+            previous_state = current_state;
+            printf("state %d\n", static_cast<int>(current_state));
         }
 
-        switch (self->state) {
+        switch (current_state) {
             case WAITING_AGENT:
                 // Check every 500ms if agent is available
                 if (rmw_uros_ping_agent(300, 1) == RMW_RET_OK) {
                     printf("ping success\n");
-                    self->state = CONNECTING;
+                    self->state.store(CONNECTING);
                 } else {
                     printf("ping wait\n");
                     delay(500);
@@ -115,34 +116,35 @@ void UrosClient::urosTask(void *arg) {
                 break;
 
             case CONNECTING:
-                self->state = (self->create_entities()) ? AGENT_CONNECTED : AGENT_DISCONNECTED;
-                if (self->state == AGENT_DISCONNECTED) {
+                self->state.store(self->create_entities() ? AGENT_CONNECTED : AGENT_DISCONNECTED);
+                if (self->state.load() == AGENT_DISCONNECTED) {
                     printf("connect fail\n");
                 }
                 break;
 
-            case AGENT_CONNECTED:
+            case AGENT_CONNECTED: {
                 static unsigned long last_ping = 0;
-                // Check every 1000ms if agent is still connected
-                if (millis() - last_ping > 1000) {
-                    last_ping = millis();
-                    if (rmw_uros_ping_agent(300, 3) != RMW_RET_OK) {
-                        printf("ping fail\n");
-                        self->state = AGENT_DISCONNECTED;
-                    }
-                }
-
                 // if (rmw_uros_ping_agent(300, 3) == RMW_RET_OK) {
                 if (rclc_executor_spin_some(&self->executor, RCL_MS_TO_NS(100)) != RCL_RET_OK) {
                     printf("spin fail\n");
-                    self->state = AGENT_DISCONNECTED;
+                    self->state.store(AGENT_DISCONNECTED);
                 }
 
-                vTaskDelay(10 / portTICK_PERIOD_MS);
+                // Check every 10000ms if agent is still connected
+                if (millis() - last_ping > 10000) {
+                    last_ping = millis();
+                    if (rmw_uros_ping_agent(1000, 3) != RMW_RET_OK) {
+                        printf("ping fail\n");
+                        self->state.store(AGENT_DISCONNECTED);
+                    }
+                }
+
+                vTaskDelay(pdMS_TO_TICKS(10));
                 break;
+            }
             case AGENT_DISCONNECTED:
                 self->destroy_entities();
-                self->state = WAITING_AGENT;
+                self->state.store(WAITING_AGENT);
                 break;
 
             default:

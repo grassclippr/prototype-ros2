@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 void LedControl::setup() {
+    pinMode(STATUS_LED, OUTPUT);
     pinMode(ERROR_LED, OUTPUT);
     pinMode(TWAI_LED, OUTPUT);
     pinMode(LYNX_A_LED, OUTPUT);
@@ -48,7 +49,7 @@ void LedControl::task(void *arg) {
 
     TickType_t xLastWakeTime = xTaskGetTickCount();
     while (1) {
-        xTaskDelayUntil(&xLastWakeTime, 1 / portTICK_RATE_MS);
+        xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10));  // 10ms tick for button polling
         // self->status_led.loop();
         self->bootButton.tick();
     }

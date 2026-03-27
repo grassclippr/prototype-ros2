@@ -5,6 +5,8 @@
 #include <std_msgs/msg/int32.h>
 #include <std_msgs/msg/string.h>
 
+#include <atomic>
+
 #include "tasks/leds/task.h"
 #include "tasks/motors/task.h"
 #include "tasks/uros/client.h"
@@ -32,7 +34,7 @@ class Rover {
     void sendNmeaCommand(const String &cmd);
 
     // ROS communication
-    bool nmea_publisher_ready = false;
+    std::atomic<bool> nmea_publisher_ready{false};
     
     rcl_timer_t timer;
     rcl_publisher_t publisher;
@@ -47,6 +49,6 @@ class Rover {
     // ESP-NOW communication
     void onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t len);
 
-    TaskHandle_t pairingTaskHandle = nullptr;
-    bool paired = false;
+    std::atomic<TaskHandle_t> pairingTaskHandle{nullptr};
+    std::atomic<bool> paired{false};
 };

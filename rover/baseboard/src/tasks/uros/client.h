@@ -11,6 +11,7 @@
 
 #include <functional>
 #include <vector>
+#include <atomic>
 
 #define RCCHECK(fn)                                                                 \
     {                                                                               \
@@ -20,11 +21,12 @@
             return false;                                                           \
         }                                                                           \
     }
-#define RCSOFTCHECK(fn)                \
-    {                                  \
-        rcl_ret_t temp_rc = fn;        \
-        if ((temp_rc != RCL_RET_OK)) { \
-        }                              \
+#define RCSOFTCHECK(fn)                                                            \
+    {                                                                               \
+        rcl_ret_t temp_rc = fn;                                                     \
+        if ((temp_rc != RCL_RET_OK)) {                                              \
+            printf("Soft check failed on line %d: %d\n", __LINE__, temp_rc);        \
+        }                                                                           \
     }
 
 enum ClientState {
@@ -52,7 +54,7 @@ class UrosClient {
     }
 
     bool isConnected() const {
-        return state == AGENT_CONNECTED;
+        return state.load() == AGENT_CONNECTED;
     }
 
    private:
@@ -63,7 +65,7 @@ class UrosClient {
     bool create_entities();
     void destroy_entities();
 
-    ClientState state = WAITING_AGENT;
+    std::atomic<ClientState> state{WAITING_AGENT};
     std::vector<std::function<void(ClientState)>> state_change_callbacks;
     std::vector<std::function<void(rcl_node_t *node, rclc_support_t *support)>> onCreateCallbacks;
     std::vector<std::function<void(rclc_executor_t *executor)>> onExecutorInitCallbacks;

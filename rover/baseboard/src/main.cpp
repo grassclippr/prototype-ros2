@@ -20,12 +20,14 @@ void setup() {
     nvs.end();
 
     switch (device_role) {
-          case ROLE_BASESTATION:
+        case ROLE_BASESTATION:
             basestation = new Basestation();
             break;
         case ROLE_ROVER:
             rover = new Rover();
             break;
+        case ROLE_UNKNOWN:
+            [[fallthrough]];
         default:
             cli = new CLI();
             break;
