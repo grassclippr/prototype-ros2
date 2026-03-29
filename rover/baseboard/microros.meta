@@ -3,12 +3,15 @@
         "rmw_microxrcedds": {
             "cmake-args": [
                 "-DRMW_UXRCE_MAX_NODES=1",
-                "-DRMW_UXRCE_MAX_PUBLISHERS=2",
-                "-DRMW_UXRCE_MAX_SUBSCRIPTIONS=1",
+                "-DRMW_UXRCE_MAX_PUBLISHERS=10",
+                "-DRMW_UXRCE_MAX_SUBSCRIPTIONS=5",
                 "-DRMW_UXRCE_MAX_SERVICES=0",
                 "-DRMW_UXRCE_MAX_CLIENTS=1",
-                "-DRMW_UXRCE_MAX_HISTORY=1",
+                "-DRMW_UXRCE_MAX_HISTORY=4",
+                "-DRMW_UROS_ERROR_HANDLING=ON",
                 "-DRMW_UXRCE_TRANSPORT=custom",
+                "-DRMW_UXRCE_ENTITY_CREATION_TIMEOUT=5000",
+                "-DRMW_UXRCE_STREAM_HISTORY=8",
             ]
         }
     }

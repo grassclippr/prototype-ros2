@@ -9,6 +9,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
+  <depend>rclpy</depend>
   <depend>controller_manager</depend>
   <depend>ros2_control</depend>
   <depend>ros2_controllers</depend>
@@ -16,6 +17,8 @@
   <depend>effort_controllers</depend>
   <depend>xacro</depend>
   <depend>nmea_navsat_driver</depend>
+  <depend>geometry_msgs</depend>
+  <depend>rover_msgs</depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
@@ -27,4 +30,3 @@
     <build_type>ament_cmake</build_type>
   </export>
 </package>
-

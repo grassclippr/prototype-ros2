@@ -1,8 +1,11 @@
 #include "./rover.h"
 
 #include "tasks/uros/serial_mux_debug.h"
+#include "tasks/uros/error.h"
 
 #define printf serial_mux::debug_printf
+
+#include <cmath>
 
 #include "./espnow.h"
 
@@ -14,9 +17,9 @@
 #define SERIAL_MUX_DISABLE_ROS 0
 #endif
 
-constexpr float GEARBOX_RATIO = 30.0f;   // Example: 30:1 gearbox
-constexpr float WHEEL_RADIUS_M = 0.05f;  // 5 cm wheel radius
-constexpr float WHEEL_BASE_M = 0.20f;    // 20 cm distance between wheels
+constexpr uint8_t DRIVE_ACK_ACCEPTED = 1;
+constexpr uint8_t DRIVE_ACK_REJECTED = 2;
+constexpr uint8_t DRIVE_ACK_TIMED_OUT = 3;
 
 static Rover *selfRover = nullptr;
 
@@ -47,6 +50,7 @@ Rover::Rover() {
         } else {
             digitalWrite(STATUS_LED, LOW);
             //leds.status_led.blink1();
+            selfRover->stopMotion();
         }
 
         switch (state) {
@@ -72,81 +76,111 @@ Rover::Rover() {
     });
     uros_client.onCreateEntities([&](rcl_node_t *node, rclc_support_t *support) {
         msg.data = 0;
+        if (!rover_msgs__msg__DriveCommand__init(&drive_command_msg)) {
+            printf("Failed to init DriveCommand message\n");
+            return false;
+        }
+        drive_command_msg_initialized = true;
+        if (!rover_msgs__msg__DriveCommandAck__init(&drive_ack_msg)) {
+            printf("Failed to init DriveCommandAck message\n");
+            return false;
+        }
+        drive_ack_msg_initialized = true;
 
-        rclc_publisher_init_default(
-            &publisher,
+        rcl_ret_t rc = rclc_publisher_init_default(
+            &drive_ack_publisher,
             node,
-            ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-            "baseboard");
+            ROSIDL_GET_MSG_TYPE_SUPPORT(rover_msgs, msg, DriveCommandAck),
+            "/drive_command_ack");
+        if (rc != RCL_RET_OK) {
+            log_rcl_error("drive ack publisher init", rc);
+            return false;
+        }
+        drive_ack_publisher_initialized = true;
 
-        rclc_publisher_init_default(
-            &nmea_publisher,
-            node,
-            ROSIDL_GET_MSG_TYPE_SUPPORT(nmea_msgs, msg, Sentence),
-            "nmea_sentence");
+        // Subscription creation can fail if the XRCE session isn't
+        // fully ready yet.  Retry with a short delay to let the
+        // session settle after the preceding publisher creation.
+        constexpr int kMaxSubRetries = 3;
+        constexpr int kSubRetryDelayMs = 500;
+        for (int attempt = 1; attempt <= kMaxSubRetries; ++attempt) {
+            if (attempt > 1) {
+                printf("Retrying /drive_command subscription (attempt %d/%d)...\n",
+                       attempt, kMaxSubRetries);
+                delay(kSubRetryDelayMs);
+                rcl_reset_error();
+                drive_command_sub = rcl_get_zero_initialized_subscription();
+            }
+            rc = rclc_subscription_init_default(
+                &drive_command_sub,
+                node,
+                ROSIDL_GET_MSG_TYPE_SUPPORT(rover_msgs, msg, DriveCommand),
+                "/drive_command");
+            if (rc == RCL_RET_OK) {
+                printf("/drive_command subscription OK (attempt %d)\n", attempt);
+                break;
+            }
+            log_rcl_error("drive command subscription init", rc);
+        }
+        if (rc != RCL_RET_OK) {
+            printf("/drive_command subscription failed after %d attempts\n", kMaxSubRetries);
+            return false;
+        }
+        drive_command_sub_initialized = true;
 
-        rclc_subscription_init_default(
-            &cmd_vel_sub,
-            node,
-            ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-            "/cmd_vel");
-
-        const uint32_t timer_timeout = 1000;  // Set to desired timeout in ms
-        rclc_timer_init_default2(
-            &timer,
-            support,
-            RCL_MS_TO_NS(timer_timeout),
-            [](rcl_timer_t *timer, int64_t last_call_time) {
-                RCSOFTCHECK(rcl_publish(&selfRover->publisher, &selfRover->msg, NULL));
-                selfRover->msg.data++;
-            },
-            true);  // autostart = true
+        printf("Drive command entities created\n");
+        return true;
     });
     uros_client.onExecutorInit([&](rclc_executor_t *executor) {
-        // Add timer to executor
-        RCCHECK(rclc_executor_add_timer(executor, &timer));
-
         RCCHECK(rclc_executor_add_subscription(
             executor,
-            &cmd_vel_sub,
-            &cmd_vel_msg,
+            &drive_command_sub,
+            &drive_command_msg,
             [](const void *msgin) -> void {
-                auto *msg = (const geometry_msgs__msg__Twist *)msgin;
-                // motors.setVelocities(msg);
+                auto *msg = static_cast<const rover_msgs__msg__DriveCommand *>(msgin);
+                const char *detail = nullptr;
+                if (!selfRover->validateDriveCommand(msg, &detail)) {
+                    printf("Rejected drive command seq=%lu reason=%s\n",
+                           static_cast<unsigned long>(msg->seq), detail);
+                    selfRover->publishDriveAck(msg->seq, DRIVE_ACK_REJECTED, detail);
+                    return;
+                }
 
-                // Calculate wheel speeds (m/s)
-                float v = msg->linear.x;   // Linear velocity (m/s)
-                float w = msg->angular.z;  // Angular velocity (rad/s)
-
-                // Differential drive kinematics
-                float left_wheel_speed = v - (w * WHEEL_BASE_M / 2.0f);   // m/s
-                float right_wheel_speed = v + (w * WHEEL_BASE_M / 2.0f);  // m/s
-
-                // Convert to wheel angular speed (rad/s)
-                float left_wheel_angular = left_wheel_speed / WHEEL_RADIUS_M;
-                float right_wheel_angular = right_wheel_speed / WHEEL_RADIUS_M;
-
-                // Apply gearbox ratio to get motor shaft speed (rad/s)
-                float left_motor_angular = left_wheel_angular * GEARBOX_RATIO;
-                float right_motor_angular = right_wheel_angular * GEARBOX_RATIO;
-
-                // Example: set LEDs based on direction
-                // digitalWrite(LYNX_A_LED, left_motor_angular = 0 ? HIGH : LOW);
-                // digitalWrite(LYNX_B_LED, left_motor_angular > 0 ? HIGH : LOW);
-                // digitalWrite(LYNX_C_LED, right_motor_angular = 0 ? HIGH : LOW);
-                // digitalWrite(LYNX_D_LED, right_motor_angular > 0 ? HIGH : LOW);
-                return;
+                printf("Accepted drive command seq=%lu linear_x=%.3f angular_z=%.3f timeout_ms=%lu\n",
+                       static_cast<unsigned long>(msg->seq),
+                       static_cast<double>(msg->linear_x),
+                       static_cast<double>(msg->angular_z),
+                       static_cast<unsigned long>(msg->timeout_ms));
+                selfRover->motors.setCommand(msg->linear_x, msg->angular_z, msg->seq, msg->timeout_ms);
+                selfRover->publishDriveAck(msg->seq, DRIVE_ACK_ACCEPTED, detail);
             },
             ON_NEW_DATA));
-
         return true;
     });
 
     // Cleanup when connection is lost
     uros_client.onDestroyEntities([&](rcl_node_t *node, rclc_support_t *support) {
-        RCSOFTCHECK(rcl_publisher_fini(&publisher, node));
-        RCSOFTCHECK(rcl_timer_fini(&timer));
-        RCSOFTCHECK(rcl_subscription_fini(&cmd_vel_sub, node));
+        (void)support;
+        if (timer_initialized) {
+            RCSOFTCHECK(rcl_timer_fini(&timer));
+            timer_initialized = false;
+        }
+        if (drive_command_sub_initialized) {
+            RCSOFTCHECK(rcl_subscription_fini(&drive_command_sub, node));
+            drive_command_sub_initialized = false;
+        }
+        if (drive_ack_publisher_initialized) {
+            RCSOFTCHECK(rcl_publisher_fini(&drive_ack_publisher, node));
+            drive_ack_publisher_initialized = false;
+        }
+        if (drive_ack_msg_initialized) {
+            rover_msgs__msg__DriveCommandAck__fini(&drive_ack_msg);
+            drive_ack_msg_initialized = false;
+        }
+        if (drive_command_msg_initialized) {
+            rover_msgs__msg__DriveCommand__fini(&drive_command_msg);
+            drive_command_msg_initialized = false;
+        }
     });
 
     // Initialize ESP-NOW
@@ -178,6 +212,14 @@ Rover::Rover() {
         1,
         &heartbeatTaskHandle);
 #endif
+
+    xTaskCreate(
+        commandWatchdogTask,
+        "commandWatchdogTask",
+        4096,
+        this,
+        1,
+        &commandWatchdogTaskHandle);
 };
 
 void Rover::gnssReceiveTask(void *arg) {
@@ -247,7 +289,7 @@ void Rover::gnssReceiveTask(void *arg) {
 
                 // printf("%s\n", line.c_str());
 
-                if (line.length() <= 82 && self->uros_client.isConnected()) {
+                if (line.length() <= 82 && self->uros_client.isConnected() && self->nmea_publisher_initialized) {
                     memcpy(selfRover->nmea_msg.sentence.data, line.c_str(), line.length());
                     selfRover->nmea_msg.sentence.size = line.length();
 
@@ -264,6 +306,20 @@ void Rover::gnssReceiveTask(void *arg) {
     }
 }
 
+void Rover::commandWatchdogTask(void *arg) {
+    Rover *self = static_cast<Rover *>(arg);
+
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    while (true) {
+        xTaskDelayUntil(&xLastWakeTime, 20 / portTICK_RATE_MS);
+
+        uint32_t expired_seq = 0;
+        if (self->motors.expireIfTimedOut(millis(), &expired_seq)) {
+            self->publishDriveAck(expired_seq, DRIVE_ACK_TIMED_OUT, "command timed out");
+        }
+    }
+}
+
 void Rover::heartbeatTask(void *arg) {
     Rover *self = (Rover *)arg;
     (void)self;
@@ -274,6 +330,39 @@ void Rover::heartbeatTask(void *arg) {
         counter++;
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
+}
+
+bool Rover::validateDriveCommand(const rover_msgs__msg__DriveCommand *msg, const char **detail) const {
+    if (!std::isfinite(msg->linear_x) || !std::isfinite(msg->angular_z)) {
+        *detail = "non-finite velocity";
+        return false;
+    }
+
+    if (msg->timeout_ms == 0 || msg->timeout_ms > 5000) {
+        *detail = "timeout_ms out of range";
+        return false;
+    }
+
+    *detail = "accepted";
+    return true;
+}
+
+void Rover::publishDriveAck(uint32_t seq, uint8_t status, const char *detail) {
+    if (!uros_client.isConnected()) {
+        return;
+    }
+
+    uint32_t now_ms = millis();
+    drive_ack_msg.stamp.sec = now_ms / 1000;
+    drive_ack_msg.stamp.nanosec = (now_ms % 1000) * 1000000UL;
+    drive_ack_msg.seq = seq;
+    drive_ack_msg.status = status;
+    rosidl_runtime_c__String__assign(&drive_ack_msg.detail, detail);
+    RCSOFTCHECK(rcl_publish(&drive_ack_publisher, &drive_ack_msg, NULL));
+}
+
+void Rover::stopMotion() {
+    motors.stop();
 }
 
 void Rover::sendNmeaCommand(const String &cmd) {
