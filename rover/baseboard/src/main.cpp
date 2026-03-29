@@ -13,7 +13,7 @@ Rover* rover = nullptr;
 
 #ifdef E2E_CRASH_TEST
 void crashTestTask(void *pvParameters) {
-    vTaskDelay(pdMS_TO_TICKS(5000));
+    vTaskDelay(pdMS_TO_TICKS(60000));
     printf("DEBUG: Initiating deliberate crash...\n");
     vTaskDelay(pdMS_TO_TICKS(100));
     *((volatile int*)0) = 0; // Trigger StoreProhibited
