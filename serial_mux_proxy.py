@@ -4,13 +4,85 @@
 from __future__ import annotations
 
 import argparse
+import array
+import fcntl
+import os
 import socket
+import subprocess
 import sys
 import threading
 import time
+import termios
+import select
 from typing import Callable, Dict, Optional
 
-import serial
+try:
+    import serial  # type: ignore
+except ImportError:
+    class _FallbackSerial:
+        def __init__(self, port: str, baudrate: int, timeout: float = 0.1):
+            self.port = port
+            self.baudrate = baudrate
+            self.timeout = timeout
+            self._fd: Optional[int] = None
+            self._open()
+
+        def _open(self) -> None:
+            subprocess.run(
+                [
+                    "stty",
+                    "-f",
+                    self.port,
+                    "raw",
+                    str(self.baudrate),
+                    "cs8",
+                    "-cstopb",
+                    "-parenb",
+                    "-ixon",
+                    "-ixoff",
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self._fd = os.open(self.port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+
+        @property
+        def in_waiting(self) -> int:
+            if self._fd is None:
+                return 0
+            buf = array.array("I", [0])
+            try:
+                fcntl.ioctl(self._fd, termios.FIONREAD, buf, True)
+                return int(buf[0])
+            except Exception:
+                return 0
+
+        def read(self, size: int = 1) -> bytes:
+            if self._fd is None or size <= 0:
+                return b""
+            ready, _, _ = select.select([self._fd], [], [], self.timeout)
+            if not ready:
+                return b""
+            try:
+                return os.read(self._fd, size)
+            except BlockingIOError:
+                return b""
+
+        def write(self, data: bytes) -> int:
+            if self._fd is None:
+                raise OSError("serial port is closed")
+            return os.write(self._fd, data)
+
+        def close(self) -> None:
+            if self._fd is not None:
+                os.close(self._fd)
+                self._fd = None
+
+    class _FallbackSerialModule:
+        Serial = _FallbackSerial
+
+    serial = _FallbackSerialModule()  # type: ignore
 
 from serial_mux import (
     END,
