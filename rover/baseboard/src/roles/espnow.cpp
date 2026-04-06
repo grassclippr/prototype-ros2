@@ -1,5 +1,9 @@
 #include "./espnow.h"
 
+#include "tasks/uros/serial_mux_debug.h"
+
+#define printf serial_mux::debug_printf
+
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp_wifi.h>

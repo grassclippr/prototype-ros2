@@ -1,0 +1,9 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY serial_mux.py serial_mux_proxy.py /app/
+
+RUN pip install --no-cache-dir pyserial
+
+ENTRYPOINT ["python3", "/app/serial_mux_proxy.py"]
