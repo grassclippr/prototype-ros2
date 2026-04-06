@@ -17,9 +17,7 @@
 #define SERIAL_MUX_DISABLE_ROS 0
 #endif
 
-constexpr uint8_t DRIVE_ACK_ACCEPTED = 1;
-constexpr uint8_t DRIVE_ACK_REJECTED = 2;
-constexpr uint8_t DRIVE_ACK_TIMED_OUT = 3;
+constexpr uint32_t CMD_VEL_TIMEOUT_MS = 500;
 
 static Rover *selfRover = nullptr;
 
@@ -75,84 +73,57 @@ Rover::Rover() {
         }
     });
     uros_client.onCreateEntities([&](rcl_node_t *node, rclc_support_t *support) {
+        (void)support;
         msg.data = 0;
-        if (!rover_msgs__msg__DriveCommand__init(&drive_command_msg)) {
-            printf("Failed to init DriveCommand message\n");
-            return false;
-        }
-        drive_command_msg_initialized = true;
-        if (!rover_msgs__msg__DriveCommandAck__init(&drive_ack_msg)) {
-            printf("Failed to init DriveCommandAck message\n");
-            return false;
-        }
-        drive_ack_msg_initialized = true;
-
-        rcl_ret_t rc = rclc_publisher_init_default(
-            &drive_ack_publisher,
-            node,
-            ROSIDL_GET_MSG_TYPE_SUPPORT(rover_msgs, msg, DriveCommandAck),
-            "/drive_command_ack");
-        if (rc != RCL_RET_OK) {
-            log_rcl_error("drive ack publisher init", rc);
-            return false;
-        }
-        drive_ack_publisher_initialized = true;
+        cmd_vel_sub = rcl_get_zero_initialized_subscription();
+        geometry_msgs__msg__Twist__init(&cmd_vel_msg);
 
         // Subscription creation can fail if the XRCE session isn't
         // fully ready yet.  Retry with a short delay to let the
-        // session settle after the preceding publisher creation.
+        // session settle.
         constexpr int kMaxSubRetries = 3;
         constexpr int kSubRetryDelayMs = 500;
+        rcl_ret_t rc = RCL_RET_ERROR;
         for (int attempt = 1; attempt <= kMaxSubRetries; ++attempt) {
             if (attempt > 1) {
-                printf("Retrying /drive_command subscription (attempt %d/%d)...\n",
-                       attempt, kMaxSubRetries);
                 delay(kSubRetryDelayMs);
                 rcl_reset_error();
-                drive_command_sub = rcl_get_zero_initialized_subscription();
+                cmd_vel_sub = rcl_get_zero_initialized_subscription();
             }
             rc = rclc_subscription_init_default(
-                &drive_command_sub,
+                &cmd_vel_sub,
                 node,
-                ROSIDL_GET_MSG_TYPE_SUPPORT(rover_msgs, msg, DriveCommand),
-                "/drive_command");
+                ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
+                "/cmd_vel");
             if (rc == RCL_RET_OK) {
-                printf("/drive_command subscription OK (attempt %d)\n", attempt);
                 break;
             }
-            log_rcl_error("drive command subscription init", rc);
+            log_rcl_error("cmd_vel subscription init", rc);
         }
         if (rc != RCL_RET_OK) {
-            printf("/drive_command subscription failed after %d attempts\n", kMaxSubRetries);
             return false;
         }
-        drive_command_sub_initialized = true;
+        cmd_vel_sub_initialized = true;
 
-        printf("Drive command entities created\n");
         return true;
     });
     uros_client.onExecutorInit([&](rclc_executor_t *executor) {
         RCCHECK(rclc_executor_add_subscription(
             executor,
-            &drive_command_sub,
-            &drive_command_msg,
+            &cmd_vel_sub,
+            &cmd_vel_msg,
             [](const void *msgin) -> void {
-                auto *msg = static_cast<const rover_msgs__msg__DriveCommand *>(msgin);
-                const char *detail = nullptr;
-                if (!selfRover->validateDriveCommand(msg, &detail)) {
-                    printf("Rejected drive command seq=%lu reason=%s\n",
-                           static_cast<unsigned long>(msg->seq), detail);
-                    selfRover->publishDriveAck(msg->seq, DRIVE_ACK_REJECTED, detail);
+                auto *twist = static_cast<const geometry_msgs__msg__Twist *>(msgin);
+
+                if (!std::isfinite(twist->linear.x) || !std::isfinite(twist->angular.z)) {
+                    printf("Rejected cmd_vel: non-finite velocity\n");
                     return;
                 }
 
-                printf("Accepted drive command seq=%lu linear_x=%.3f angular_z=%.3f timeout_ms=%lu\n",
-                       static_cast<unsigned long>(msg->seq),
-                       static_cast<double>(msg->linear_x),
-                       static_cast<double>(msg->angular_z),
-                       static_cast<unsigned long>(msg->timeout_ms));
-                selfRover->motors.setCommand(msg->linear_x, msg->angular_z, msg->seq, msg->timeout_ms);
-                selfRover->publishDriveAck(msg->seq, DRIVE_ACK_ACCEPTED, detail);
+                selfRover->motors.setCommand(
+                    static_cast<float>(twist->linear.x),
+                    static_cast<float>(twist->angular.z),
+                    0, CMD_VEL_TIMEOUT_MS);
             },
             ON_NEW_DATA));
         return true;
@@ -165,21 +136,9 @@ Rover::Rover() {
             RCSOFTCHECK(rcl_timer_fini(&timer));
             timer_initialized = false;
         }
-        if (drive_command_sub_initialized) {
-            RCSOFTCHECK(rcl_subscription_fini(&drive_command_sub, node));
-            drive_command_sub_initialized = false;
-        }
-        if (drive_ack_publisher_initialized) {
-            RCSOFTCHECK(rcl_publisher_fini(&drive_ack_publisher, node));
-            drive_ack_publisher_initialized = false;
-        }
-        if (drive_ack_msg_initialized) {
-            rover_msgs__msg__DriveCommandAck__fini(&drive_ack_msg);
-            drive_ack_msg_initialized = false;
-        }
-        if (drive_command_msg_initialized) {
-            rover_msgs__msg__DriveCommand__fini(&drive_command_msg);
-            drive_command_msg_initialized = false;
+        if (cmd_vel_sub_initialized) {
+            RCSOFTCHECK(rcl_subscription_fini(&cmd_vel_sub, node));
+            cmd_vel_sub_initialized = false;
         }
     });
 
@@ -313,10 +272,7 @@ void Rover::commandWatchdogTask(void *arg) {
     while (true) {
         xTaskDelayUntil(&xLastWakeTime, 20 / portTICK_RATE_MS);
 
-        uint32_t expired_seq = 0;
-        if (self->motors.expireIfTimedOut(millis(), &expired_seq)) {
-            self->publishDriveAck(expired_seq, DRIVE_ACK_TIMED_OUT, "command timed out");
-        }
+        self->motors.expireIfTimedOut(millis(), nullptr);
     }
 }
 
@@ -330,35 +286,6 @@ void Rover::heartbeatTask(void *arg) {
         counter++;
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
-}
-
-bool Rover::validateDriveCommand(const rover_msgs__msg__DriveCommand *msg, const char **detail) const {
-    if (!std::isfinite(msg->linear_x) || !std::isfinite(msg->angular_z)) {
-        *detail = "non-finite velocity";
-        return false;
-    }
-
-    if (msg->timeout_ms == 0 || msg->timeout_ms > 5000) {
-        *detail = "timeout_ms out of range";
-        return false;
-    }
-
-    *detail = "accepted";
-    return true;
-}
-
-void Rover::publishDriveAck(uint32_t seq, uint8_t status, const char *detail) {
-    if (!uros_client.isConnected()) {
-        return;
-    }
-
-    uint32_t now_ms = millis();
-    drive_ack_msg.stamp.sec = now_ms / 1000;
-    drive_ack_msg.stamp.nanosec = (now_ms % 1000) * 1000000UL;
-    drive_ack_msg.seq = seq;
-    drive_ack_msg.status = status;
-    rosidl_runtime_c__String__assign(&drive_ack_msg.detail, detail);
-    RCSOFTCHECK(rcl_publish(&drive_ack_publisher, &drive_ack_msg, NULL));
 }
 
 void Rover::stopMotion() {

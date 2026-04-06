@@ -1,6 +1,7 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration, Command, PathJoinSubstitution, FindExecutable
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration, Command, PathJoinSubstitution, FindExecutable, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
@@ -13,6 +14,36 @@ declare_log_level_arg = DeclareLaunchArgument(
     description="Logging level for all nodes"
 )
 log_level = LaunchConfiguration("log_level")
+declare_use_joystick_arg = DeclareLaunchArgument(
+    name="use_joystick",
+    default_value="false",
+    description="Start joy_node and teleop_twist_joy"
+)
+use_joystick = LaunchConfiguration("use_joystick")
+declare_joy_backend_arg = DeclareLaunchArgument(
+    name="joy_backend",
+    default_value="game_controller_node",
+    description="Joystick backend: joy_node or game_controller_node"
+)
+joy_backend = LaunchConfiguration("joy_backend")
+declare_joy_dev_arg = DeclareLaunchArgument(
+    name="joy_dev",
+    default_value="/dev/input/js0",
+    description="Linux joystick device for joy_node"
+)
+joy_dev = LaunchConfiguration("joy_dev")
+declare_joy_device_id_arg = DeclareLaunchArgument(
+    name="joy_device_id",
+    default_value="0",
+    description="Joystick device index for joy/game_controller nodes"
+)
+joy_device_id = LaunchConfiguration("joy_device_id")
+declare_joy_device_name_arg = DeclareLaunchArgument(
+    name="joy_device_name",
+    default_value="",
+    description="Optional joystick device name to match exactly"
+)
+joy_device_name = LaunchConfiguration("joy_device_name")
 
 xacro_file = PathJoinSubstitution([
     FindPackageShare(PACKAGE_NAME),
@@ -34,11 +65,21 @@ ros2_control_config = PathJoinSubstitution([
     "config",
     "robomow_ros2_control.yaml"
 ])
+joystick_config = PathJoinSubstitution([
+    FindPackageShare(PACKAGE_NAME),
+    "config",
+    "ps_controller_teleop.yaml"
+])
 
 
 def generate_launch_description():
     return LaunchDescription([
         declare_log_level_arg,
+        declare_use_joystick_arg,
+        declare_joy_backend_arg,
+        declare_joy_dev_arg,
+        declare_joy_device_id_arg,
+        declare_joy_device_name_arg,
 
         # robot_state_publisher with xacro-based URDF
         Node(
@@ -76,6 +117,43 @@ def generate_launch_description():
             executable='spawner',
             arguments=['diff_drive_controller', '--controller-manager', '/controller_manager'],
             output='screen'
+        ),
+
+        Node(
+            package='joy',
+            executable='joy_node',
+            name='joy_node',
+            output='screen',
+            parameters=[{
+                "dev": joy_dev,
+                "device_id": joy_device_id,
+                "deadzone": 0.2,
+                "autorepeat_rate": 5.0,
+            }],
+            condition=IfCondition(PythonExpression(["'", use_joystick, "' == 'true' and '", joy_backend, "' == 'joy_node'"]))
+        ),
+
+        Node(
+            package='joy',
+            executable='game_controller_node',
+            name='joy_node',
+            output='screen',
+            parameters=[{
+                "device_id": joy_device_id,
+                "device_name": joy_device_name,
+                "deadzone": 0.2,
+                "autorepeat_rate": 5.0,
+            }],
+            condition=IfCondition(PythonExpression(["'", use_joystick, "' == 'true' and '", joy_backend, "' != 'joy_node'"]))
+        ),
+
+        Node(
+            package='teleop_twist_joy',
+            executable='teleop_node',
+            name='teleop_twist_joy_node',
+            output='screen',
+            parameters=[joystick_config],
+            condition=IfCondition(use_joystick)
         ),
 
         Node(

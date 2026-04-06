@@ -15,7 +15,6 @@ find_package(ros2_controllers REQUIRED)
 find_package(joint_state_broadcaster REQUIRED)
 find_package(effort_controllers REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(rover_msgs REQUIRED)
 find_package(xacro REQUIRED)
 
 install (
@@ -28,8 +27,7 @@ install(DIRECTORY config
 )
 
 install(PROGRAMS
-  scripts/cmd_vel_to_drive_command.py
-  scripts/send_drive_command.py
+  scripts/keyboard_twist_teleop.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

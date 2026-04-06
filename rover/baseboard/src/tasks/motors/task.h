@@ -1,6 +1,8 @@
 #ifndef MOTOR_CONTROL_TASK_H
 #define MOTOR_CONTROL_TASK_H
 
+#include <stdint.h>
+
 #include "driver/ledc.h"
 
 class MotorControl {
@@ -22,6 +24,8 @@ class MotorControl {
     Command getCommand() const;
 
    private:
+    void applyWheelOutputs(float left_speed, float right_speed);
+
     volatile float linear_x_ = 0.0f;
     volatile float angular_z_ = 0.0f;
     volatile uint32_t seq_ = 0;
