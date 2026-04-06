@@ -59,10 +59,10 @@ class SerialMux {
     static constexpr size_t kCrcLen = 4;
     static constexpr size_t kMaxFrameLen = kHeaderLen + kMaxPayload + kCrcLen;
 
-    uint8_t raw_frame_buf_[kMaxFrameLen];
-    uint8_t encoded_frame_buf_[kMaxFrameLen * 2 + 1];
+    uint8_t raw_frame_buf_[kMaxFrameLen] = {};
+    uint8_t encoded_frame_buf_[kMaxFrameLen * 2 + 1] = {};
 
-    uint8_t frame_buf_[kMaxFrameLen];
+    uint8_t frame_buf_[kMaxFrameLen] = {};
     size_t frame_len_ = 0;
     bool escape_ = false;
     bool drop_frame_ = false;

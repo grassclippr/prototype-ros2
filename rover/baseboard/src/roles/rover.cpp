@@ -1,8 +1,11 @@
 #include "./rover.h"
 
 #include "tasks/uros/serial_mux_debug.h"
+#include "tasks/uros/error.h"
 
 #define printf serial_mux::debug_printf
+
+#include <cmath>
 
 #include "./espnow.h"
 
@@ -14,9 +17,7 @@
 #define SERIAL_MUX_DISABLE_ROS 0
 #endif
 
-constexpr float GEARBOX_RATIO = 30.0f;   // Example: 30:1 gearbox
-constexpr float WHEEL_RADIUS_M = 0.05f;  // 5 cm wheel radius
-constexpr float WHEEL_BASE_M = 0.20f;    // 20 cm distance between wheels
+constexpr uint32_t CMD_VEL_TIMEOUT_MS = 500;
 
 static Rover *selfRover = nullptr;
 
@@ -47,6 +48,7 @@ Rover::Rover() {
         } else {
             digitalWrite(STATUS_LED, LOW);
             //leds.status_led.blink1();
+            selfRover->stopMotion();
         }
 
         switch (state) {
@@ -71,82 +73,73 @@ Rover::Rover() {
         }
     });
     uros_client.onCreateEntities([&](rcl_node_t *node, rclc_support_t *support) {
+        (void)support;
         msg.data = 0;
+        cmd_vel_sub = rcl_get_zero_initialized_subscription();
+        geometry_msgs__msg__Twist__init(&cmd_vel_msg);
 
-        rclc_publisher_init_default(
-            &publisher,
-            node,
-            ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-            "baseboard");
+        // Subscription creation can fail if the XRCE session isn't
+        // fully ready yet.  Retry with a short delay to let the
+        // session settle.
+        constexpr int kMaxSubRetries = 3;
+        constexpr int kSubRetryDelayMs = 500;
+        rcl_ret_t rc = RCL_RET_ERROR;
+        for (int attempt = 1; attempt <= kMaxSubRetries; ++attempt) {
+            if (attempt > 1) {
+                delay(kSubRetryDelayMs);
+                rcl_reset_error();
+                cmd_vel_sub = rcl_get_zero_initialized_subscription();
+            }
+            rc = rclc_subscription_init_default(
+                &cmd_vel_sub,
+                node,
+                ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
+                "/cmd_vel");
+            if (rc == RCL_RET_OK) {
+                break;
+            }
+            log_rcl_error("cmd_vel subscription init", rc);
+        }
+        if (rc != RCL_RET_OK) {
+            return false;
+        }
+        cmd_vel_sub_initialized = true;
 
-        rclc_publisher_init_default(
-            &nmea_publisher,
-            node,
-            ROSIDL_GET_MSG_TYPE_SUPPORT(nmea_msgs, msg, Sentence),
-            "nmea_sentence");
-
-        rclc_subscription_init_default(
-            &cmd_vel_sub,
-            node,
-            ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-            "/cmd_vel");
-
-        const uint32_t timer_timeout = 1000;  // Set to desired timeout in ms
-        rclc_timer_init_default2(
-            &timer,
-            support,
-            RCL_MS_TO_NS(timer_timeout),
-            [](rcl_timer_t *timer, int64_t last_call_time) {
-                RCSOFTCHECK(rcl_publish(&selfRover->publisher, &selfRover->msg, NULL));
-                selfRover->msg.data++;
-            },
-            true);  // autostart = true
+        return true;
     });
     uros_client.onExecutorInit([&](rclc_executor_t *executor) {
-        // Add timer to executor
-        RCCHECK(rclc_executor_add_timer(executor, &timer));
-
         RCCHECK(rclc_executor_add_subscription(
             executor,
             &cmd_vel_sub,
             &cmd_vel_msg,
             [](const void *msgin) -> void {
-                auto *msg = (const geometry_msgs__msg__Twist *)msgin;
-                // motors.setVelocities(msg);
+                auto *twist = static_cast<const geometry_msgs__msg__Twist *>(msgin);
 
-                // Calculate wheel speeds (m/s)
-                float v = msg->linear.x;   // Linear velocity (m/s)
-                float w = msg->angular.z;  // Angular velocity (rad/s)
+                if (!std::isfinite(twist->linear.x) || !std::isfinite(twist->angular.z)) {
+                    printf("Rejected cmd_vel: non-finite velocity\n");
+                    return;
+                }
 
-                // Differential drive kinematics
-                float left_wheel_speed = v - (w * WHEEL_BASE_M / 2.0f);   // m/s
-                float right_wheel_speed = v + (w * WHEEL_BASE_M / 2.0f);  // m/s
-
-                // Convert to wheel angular speed (rad/s)
-                float left_wheel_angular = left_wheel_speed / WHEEL_RADIUS_M;
-                float right_wheel_angular = right_wheel_speed / WHEEL_RADIUS_M;
-
-                // Apply gearbox ratio to get motor shaft speed (rad/s)
-                float left_motor_angular = left_wheel_angular * GEARBOX_RATIO;
-                float right_motor_angular = right_wheel_angular * GEARBOX_RATIO;
-
-                // Example: set LEDs based on direction
-                // digitalWrite(LYNX_A_LED, left_motor_angular = 0 ? HIGH : LOW);
-                // digitalWrite(LYNX_B_LED, left_motor_angular > 0 ? HIGH : LOW);
-                // digitalWrite(LYNX_C_LED, right_motor_angular = 0 ? HIGH : LOW);
-                // digitalWrite(LYNX_D_LED, right_motor_angular > 0 ? HIGH : LOW);
-                return;
+                selfRover->motors.setCommand(
+                    static_cast<float>(twist->linear.x),
+                    static_cast<float>(twist->angular.z),
+                    0, CMD_VEL_TIMEOUT_MS);
             },
             ON_NEW_DATA));
-
         return true;
     });
 
     // Cleanup when connection is lost
     uros_client.onDestroyEntities([&](rcl_node_t *node, rclc_support_t *support) {
-        RCSOFTCHECK(rcl_publisher_fini(&publisher, node));
-        RCSOFTCHECK(rcl_timer_fini(&timer));
-        RCSOFTCHECK(rcl_subscription_fini(&cmd_vel_sub, node));
+        (void)support;
+        if (timer_initialized) {
+            RCSOFTCHECK(rcl_timer_fini(&timer));
+            timer_initialized = false;
+        }
+        if (cmd_vel_sub_initialized) {
+            RCSOFTCHECK(rcl_subscription_fini(&cmd_vel_sub, node));
+            cmd_vel_sub_initialized = false;
+        }
     });
 
     // Initialize ESP-NOW
@@ -178,6 +171,14 @@ Rover::Rover() {
         1,
         &heartbeatTaskHandle);
 #endif
+
+    xTaskCreate(
+        commandWatchdogTask,
+        "commandWatchdogTask",
+        4096,
+        this,
+        1,
+        &commandWatchdogTaskHandle);
 };
 
 void Rover::gnssReceiveTask(void *arg) {
@@ -247,7 +248,7 @@ void Rover::gnssReceiveTask(void *arg) {
 
                 // printf("%s\n", line.c_str());
 
-                if (line.length() <= 82 && self->uros_client.isConnected()) {
+                if (line.length() <= 82 && self->uros_client.isConnected() && self->nmea_publisher_initialized) {
                     memcpy(selfRover->nmea_msg.sentence.data, line.c_str(), line.length());
                     selfRover->nmea_msg.sentence.size = line.length();
 
@@ -264,6 +265,17 @@ void Rover::gnssReceiveTask(void *arg) {
     }
 }
 
+void Rover::commandWatchdogTask(void *arg) {
+    Rover *self = static_cast<Rover *>(arg);
+
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    while (true) {
+        xTaskDelayUntil(&xLastWakeTime, 20 / portTICK_RATE_MS);
+
+        self->motors.expireIfTimedOut(millis(), nullptr);
+    }
+}
+
 void Rover::heartbeatTask(void *arg) {
     Rover *self = (Rover *)arg;
     (void)self;
@@ -274,6 +286,10 @@ void Rover::heartbeatTask(void *arg) {
         counter++;
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
+}
+
+void Rover::stopMotion() {
+    motors.stop();
 }
 
 void Rover::sendNmeaCommand(const String &cmd) {

@@ -6,9 +6,7 @@
 
 namespace serial_mux {
 
-SerialMux::SerialMux(Stream &stream) : stream_(stream) {
-    write_mutex_ = xSemaphoreCreateMutex();
-}
+SerialMux::SerialMux(Stream &stream) : stream_(stream), write_mutex_(xSemaphoreCreateMutex()) {}
 
 uint32_t SerialMux::crc32(const uint8_t *data, size_t len) {
     uint32_t crc = 0xFFFFFFFF;
