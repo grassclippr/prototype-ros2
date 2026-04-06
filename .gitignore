@@ -1,4 +1,5 @@
 .env
+.make/
 .hypothesis/
 __pycache__/
 fuzzing/__pycache__/

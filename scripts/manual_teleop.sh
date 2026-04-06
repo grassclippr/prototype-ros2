@@ -4,9 +4,7 @@ set -euo pipefail
 BAUDRATE="${BAUDRATE:-921600}"
 PROXY_PORT="${PROXY_PORT:-8888}"
 SERIAL_DEV="${SERIAL_DEV:-/dev/ttyACM0}"
-HEARTBEAT_TIMEOUT="${HEARTBEAT_TIMEOUT:-15}"
-ROS_TIMEOUT="${ROS_TIMEOUT:-10}"
-BASEBOARD_TIMEOUT="${BASEBOARD_TIMEOUT:-15}"
+HEARTBEAT_TIMEOUT="${HEARTBEAT_TIMEOUT:-20}"
 source "$(dirname "$0")/resolve_serial_dev.sh"
 SERIAL_DEV="$(resolve_serial_dev)"
 COMPOSE_CMD="${COMPOSE_CMD:-podman-compose}"
@@ -69,17 +67,6 @@ else
   fi
 fi
 
-echo "Checking /baseboard ROS data (timeout: ${ROS_TIMEOUT}s)..."
-echo "Waiting for /baseboard topic (timeout: ${BASEBOARD_TIMEOUT}s)..."
-if ! timeout "${BASEBOARD_TIMEOUT}s" sh -c 'make ros ARGS="topic list -t" | rg -m1 "^/baseboard "'; then
-  echo "error: /baseboard topic not found" >&2
-  exit 1
-fi
-
-echo "Checking /baseboard ROS data (timeout: ${ROS_TIMEOUT}s)..."
-if ! timeout "${ROS_TIMEOUT}s" sh -c 'make ros ARGS="topic echo /baseboard --once" | rg -m1 "^data:"'; then
-  echo "error: no /baseboard data received" >&2
-  exit 1
-fi
-
-echo "E2E check passed: heartbeat + /baseboard data OK"
+echo "Starting keyboard teleop. Use w/s/a/d to move, space or x to stop, q to quit."
+podman exec -it core bash -lc \
+  "source /opt/ros/jazzy/setup.bash && source /root/ros2_ws/install/setup.bash && ros2 run rover_description keyboard_twist_teleop.py"

@@ -4,6 +4,9 @@ set -euo pipefail
 PIO_PROJECT="${PIO_PROJECT:-rover/baseboard}"
 SERIAL_DEV="${SERIAL_DEV:-/dev/ttyACM0}"
 BAUDRATE="${BAUDRATE:-115200}"
+source "$(dirname "$0")/resolve_serial_dev.sh"
+SERIAL_DEV="$(resolve_serial_dev)"
+COMPOSE_CMD="${COMPOSE_CMD:-podman-compose}"
 
 # Ensure rg is installed
 if ! command -v rg >/dev/null 2>&1; then
@@ -22,14 +25,14 @@ cleanup() {
     echo "========================================="
     
     # Stop containers to release serial port
-    podman-compose down >/dev/null 2>&1 || true
+    "$COMPOSE_CMD" down >/dev/null 2>&1 || true
     
     # Re-flash without the crash test flag
     echo "Flashing standard firmware..."
     PIO_BUILD_FLAGS="" pio run -t upload -d "$PIO_PROJECT" >/dev/null 2>&1 || echo "Warning: Restore flash failed."
     
     # Restart services
-    podman-compose up -d core serial_mux_proxy micro_ros_agent >/dev/null 2>&1 || true
+    "$COMPOSE_CMD" up -d core serial_mux_proxy micro_ros_agent >/dev/null 2>&1 || true
     
     echo "Restore complete."
 }
@@ -40,7 +43,7 @@ trap cleanup EXIT INT TERM
 echo "========================================="
 echo "Stopping Podman services to free serial port"
 echo "========================================="
-podman-compose down || true
+"$COMPOSE_CMD" down || true
 
 echo "========================================="
 echo "Building and flashing CRASH TEST firmware (60s delay)"
@@ -50,7 +53,7 @@ PIO_BUILD_FLAGS="-D E2E_CRASH_TEST" pio run -t upload -d "$PIO_PROJECT"
 echo "========================================="
 echo "Starting Podman services (Proxy, Agent, Core)"
 echo "========================================="
-podman-compose up -d core serial_mux_proxy micro_ros_agent
+"$COMPOSE_CMD" up -d core serial_mux_proxy micro_ros_agent
 
 echo "========================================="
 echo "Waiting for Serial Activity (Heartbeat)..."
