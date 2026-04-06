@@ -1,5 +1,18 @@
 #include <Arduino.h>
+
 #include "./client.h"
+#ifndef SERIAL_MUX_ENABLE
+#define SERIAL_MUX_ENABLE 1
+#endif
+
+#ifndef SERIAL_MUX_PACKET_MODE
+#define SERIAL_MUX_PACKET_MODE 1
+#endif
+#if SERIAL_MUX_ENABLE
+#include "./serial_mux.h"
+#include "./serial_mux_debug.h"
+#include "./serial_mux_transport.h"
+#endif
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -10,6 +23,10 @@ void UrosClient::reportNewState(ClientState new_state) {
         callback(new_state);
     }
 }
+
+#ifndef SERIAL_MUX_SKIP_PING
+#define SERIAL_MUX_SKIP_PING 0
+#endif
 
 bool UrosClient::create_entities() {
     allocator = rcl_get_default_allocator();
@@ -48,7 +65,20 @@ void UrosClient::destroy_entities() {
 }
 
 void UrosClient::setup(Stream & stream) {
+    #if SERIAL_MUX_ENABLE
+    static serial_mux::SerialMux mux(stream);
+    serial_mux::set_debug_mux(&mux);
+
+    rmw_uros_set_custom_transport(
+        SERIAL_MUX_PACKET_MODE ? false : true,
+        &mux,
+        serial_mux_transport_open,
+        serial_mux_transport_close,
+        serial_mux_transport_write,
+        serial_mux_transport_read);
+    #else
     set_microros_serial_transports(stream);
+    #endif
 
     xTaskCreate(
         urosTask,
@@ -74,12 +104,16 @@ void UrosClient::urosTask(void *arg) {
 
         switch (self->state) {
             case WAITING_AGENT:
+                #if SERIAL_MUX_SKIP_PING
+                self->state = CONNECTING;
+                #else
                 // Check every 500ms if agent is available
                 if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) {
                     self->state = CONNECTING;
                 } else {
                     delay(500);
                 }
+                #endif
                 break;
 
             case CONNECTING:

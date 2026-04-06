@@ -22,6 +22,7 @@ class Rover {
     MotorControl motors;
     static void pairingTask(void *arg);
     static void gnssReceiveTask(void *arg);
+    static void heartbeatTask(void *arg);
 
     void sendNmeaCommand(const String &cmd);
 
@@ -40,5 +41,6 @@ class Rover {
     void onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t len);
 
     TaskHandle_t pairingTaskHandle = nullptr;
+    TaskHandle_t heartbeatTaskHandle = nullptr;
     bool paired = false;
 };

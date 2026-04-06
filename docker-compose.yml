@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   core:
     build:
@@ -12,16 +10,28 @@ services:
     volumes:
       - ./rover:/root/ros2_ws/src/rover
 
+  serial_mux_proxy:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.proxy
+    container_name: serial_mux_proxy
+    networks:
+      - micro_ros_net
+    command: ["${SERIAL_DEV:-/dev/ttyACM0}", "${PROXY_PORT:-8888}", "${BAUDRATE:-115200}", "--agent-host", "${AGENT_HOST:-micro_ros_agent}"]
+    volumes:
+      - ./serial_mux_proxy.py:/app/serial_mux_proxy.py
+      - ./serial_mux.py:/app/serial_mux.py
+    devices:
+      - ${SERIAL_DEV:-/dev/ttyACM0}:${SERIAL_DEV:-/dev/ttyACM0}
+
   micro_ros_agent:
     image: microros/micro-ros-agent:jazzy
     container_name: micro_ros_agent
     networks:
       - micro_ros_net
-    command: ["serial", "--dev", "/dev/ttyACM0"]
-    volumes:
-      - /dev/ttyACM1-1:/dev/ttyACM0
-      #devices:
-      #- /dev/ttyACM0:/dev/ttyACM0
+    command: ["tcp4", "--port", "${PROXY_PORT:-8888}", "-v6"]
+    depends_on:
+      - serial_mux_proxy
 
 networks:
   micro_ros_net:
