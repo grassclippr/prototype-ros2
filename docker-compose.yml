@@ -9,6 +9,7 @@ services:
     command: ["ros2", "launch", "rover_description", "robot_control.launch.py"]
     volumes:
       - ./rover:/root/ros2_ws/src/rover
+      - /dev/input:/dev/input:ro
 
   serial_mux_proxy:
     build:
@@ -30,8 +31,8 @@ services:
     networks:
       - micro_ros_net
     command: ["tcp4", "--port", "${PROXY_PORT:-8888}", "-v6"]
-    depends_on:
-      - serial_mux_proxy
+    ports:
+      - "${PROXY_PORT:-8888}:${PROXY_PORT:-8888}"
 
 networks:
   micro_ros_net:
