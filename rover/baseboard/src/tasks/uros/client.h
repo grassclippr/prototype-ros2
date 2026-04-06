@@ -10,10 +10,13 @@
 #include <functional>
 #include <vector>
 
+#include "./error.h"
+
 #define RCCHECK(fn)                    \
     {                                  \
         rcl_ret_t temp_rc = fn;        \
         if ((temp_rc != RCL_RET_OK)) { \
+            log_rcl_error(#fn, temp_rc); \
             return false;              \
         }                              \
     }
@@ -38,10 +41,10 @@ class UrosClient {
     void subscribeToStateChange(std::function<void(ClientState)> callback) {
         state_change_callbacks.push_back(callback);
     }
-    void onCreateEntities(std::function<void(rcl_node_t *node, rclc_support_t *support)> callback) {
+    void onCreateEntities(std::function<bool(rcl_node_t *node, rclc_support_t *support)> callback) {
         onCreateCallbacks.push_back(callback);
     }
-    void onExecutorInit(std::function<void(rclc_executor_t *executor)> callback) {
+    void onExecutorInit(std::function<bool(rclc_executor_t *executor)> callback) {
         onExecutorInitCallbacks.push_back(callback);
     }
     void onDestroyEntities(std::function<void(rcl_node_t *node, rclc_support_t *support)> callback) {
@@ -62,14 +65,18 @@ class UrosClient {
 
     ClientState state = WAITING_AGENT;
     std::vector<std::function<void(ClientState)>> state_change_callbacks;
-    std::vector<std::function<void(rcl_node_t *node, rclc_support_t *support)>> onCreateCallbacks;
-    std::vector<std::function<void(rclc_executor_t *executor)>> onExecutorInitCallbacks;
+    std::vector<std::function<bool(rcl_node_t *node, rclc_support_t *support)>> onCreateCallbacks;
+    std::vector<std::function<bool(rclc_executor_t *executor)>> onExecutorInitCallbacks;
     std::vector<std::function<void(rcl_node_t *node, rclc_support_t *support)>> onDestroyCallbacks;
 
-    rclc_executor_t executor;
-    rclc_support_t support;
+    rclc_executor_t executor = rclc_executor_get_zero_initialized_executor();
+    rclc_support_t support{};
     rcl_allocator_t allocator;
-    rcl_node_t node;
+    rcl_node_t node = rcl_get_zero_initialized_node();
+    bool support_initialized = false;
+    bool node_initialized = false;
+    bool executor_initialized = false;
+    uint32_t last_ping_ms = 0;
 };
 
 #endif  // UROS_CLIENT_H
