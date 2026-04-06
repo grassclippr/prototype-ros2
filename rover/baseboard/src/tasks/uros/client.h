@@ -69,13 +69,14 @@ class UrosClient {
     std::vector<std::function<bool(rclc_executor_t *executor)>> onExecutorInitCallbacks;
     std::vector<std::function<void(rcl_node_t *node, rclc_support_t *support)>> onDestroyCallbacks;
 
-    rclc_executor_t executor;
-    rclc_support_t support;
+    rclc_executor_t executor = rclc_executor_get_zero_initialized_executor();
+    rclc_support_t support{};
     rcl_allocator_t allocator;
-    rcl_node_t node;
+    rcl_node_t node = rcl_get_zero_initialized_node();
     bool support_initialized = false;
     bool node_initialized = false;
     bool executor_initialized = false;
+    uint32_t last_ping_ms = 0;
 };
 
 #endif  // UROS_CLIENT_H

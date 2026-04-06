@@ -93,7 +93,7 @@ bool UrosClient::create_entities() {
     // Allow the XRCE session to settle after node creation.
     // Without this, the first publisher/subscription creation often
     // fails because uxr_run_session_until_all_status() times out.
-    vTaskDelay(pdMS_TO_TICKS(1500));
+    vTaskDelay(pdMS_TO_TICKS(3000));
 
     // APP
     for (auto &callback : onCreateCallbacks) {
@@ -146,7 +146,7 @@ void UrosClient::setup(Stream & stream) {
     serial_mux::set_debug_mux(&mux);
 
     rmw_uros_set_custom_transport(
-        SERIAL_MUX_PACKET_MODE ? false : true,
+        SERIAL_MUX_PACKET_MODE ? MICROROS_TRANSPORTS_PACKET_MODE : MICROROS_TRANSPORTS_FRAMING_MODE,
         &mux,
         serial_mux_transport_open,
         serial_mux_transport_close,
@@ -192,37 +192,47 @@ void UrosClient::urosTask(void *arg) {
 
         static int previous_state = AGENT_DISCONNECTED;
         if (previous_state != self->state) {
+            printf("uros state -> %d\n", self->state);
             self->reportNewState(self->state);
             previous_state = self->state;
         }
 
         switch (self->state) {
             case WAITING_AGENT:
+            {
                 #if SERIAL_MUX_SKIP_PING
                 self->state = CONNECTING;
                 #else
                 // Check every 500ms if agent is available
-                if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) {
+                rcl_ret_t ping_rc = rmw_uros_ping_agent(100, 1);
+                if (ping_rc == RMW_RET_OK) {
                     self->state = CONNECTING;
                 } else {
                     delay(500);
                 }
                 #endif
                 break;
+            }
 
             case CONNECTING:
                 self->state = (self->create_entities()) ? AGENT_CONNECTED : AGENT_DISCONNECTED;
                 break;
 
             case AGENT_CONNECTED:
-                // Check every 200ms if agent is still connected
-                if (rmw_uros_ping_agent(100, 3) == RMW_RET_OK) {
-                    rclc_executor_spin_some(&self->executor, RCL_MS_TO_NS(100));
-                } else {
-                    self->state = AGENT_DISCONNECTED;
+            {
+                // Ping the agent infrequently to detect disconnects.
+                if (millis() - self->last_ping_ms > 2000) {
+                    self->last_ping_ms = millis();
+                    rcl_ret_t ping_rc = rmw_uros_ping_agent(100, 1);
+                    if (ping_rc != RMW_RET_OK) {
+                        self->state = AGENT_DISCONNECTED;
+                        break;
+                    }
                 }
-                delay(200);
+                rclc_executor_spin_some(&self->executor, RCL_MS_TO_NS(10));
+                delay(10);
                 break;
+            }
 
             case AGENT_DISCONNECTED:
                 self->destroy_entities();
