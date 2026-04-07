@@ -1,0 +1,25 @@
+FROM python:3.13-slim
+
+# Add build arguments and environment variables for defaults
+ARG SERIAL_DEV=/dev/ttyACM0
+ARG PROXY_PORT=8888
+ARG BAUDRATE=115200
+ENV SERIAL_DEV=${SERIAL_DEV}
+ENV PROXY_PORT=${PROXY_PORT}
+ENV BAUDRATE=${BAUDRATE}
+
+# Install Python dependencies
+#COPY requirements.txt /app/requirements.txt
+#RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Create app directory
+WORKDIR /app
+
+# Copy proxy script
+COPY microros_proxy.py /app/
+
+# Make script executable
+RUN chmod +x /app/microros_proxy.py
+
+CMD ["python3", "/app/microros_proxy.py", "$SERIAL_DEV", "$PROXY_PORT", "$BAUDRATE"]
+

@@ -17,6 +17,6 @@ void MotorControl::task(void *arg) {
 
     TickType_t xLastWakeTime = xTaskGetTickCount();
     while (1) {
-        xTaskDelayUntil(&xLastWakeTime, 10 / portTICK_RATE_MS);
+        xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10));
     }
 }

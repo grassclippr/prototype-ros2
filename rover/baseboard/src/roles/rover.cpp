@@ -11,13 +11,23 @@ static Rover *selfRover = nullptr;
 Rover::Rover() {
     selfRover = this;
 
+    nmea_msgs__msg__Sentence__init(&selfRover->nmea_msg);
+    static constexpr size_t NMEA_SENTENCE_CAPACITY = 100;  // max 82 chars + margin
+    selfRover->nmea_msg.sentence.capacity = NMEA_SENTENCE_CAPACITY;
+    selfRover->nmea_msg.sentence.data = static_cast<char *>(malloc(NMEA_SENTENCE_CAPACITY * sizeof(char)));
+    if (selfRover->nmea_msg.sentence.data == nullptr) {
+        printf("FATAL: Failed to allocate NMEA sentence buffer\n");
+        esp_restart();
+    }
+    selfRover->nmea_msg.sentence.size = 0;
+
     USBSerial.begin(115200);
     leds.setup();
     motors.setup();
     uros_client.setup(USBSerial);
 
     leds.bootButton.attachClick([]() {
-        if (selfRover->pairingTaskHandle == nullptr) {
+        if (selfRover->pairingTaskHandle.load() == nullptr) {
             printf("Starting pairing mode\n");
             selfRover->startPairing();
         } else {
@@ -29,10 +39,10 @@ Rover::Rover() {
     uros_client.subscribeToStateChange([&](ClientState state) {
         if (state == AGENT_CONNECTED) {
             digitalWrite(STATUS_LED, HIGH);
-            //leds.status_led.on();
+            // leds.status_led.on();
         } else {
             digitalWrite(STATUS_LED, LOW);
-            //leds.status_led.blink1();
+            // leds.status_led.blink1();
         }
 
         switch (state) {
@@ -51,9 +61,9 @@ Rover::Rover() {
             case CONNECTING:
                 digitalWrite(LYNX_C_LED, HIGH);
                 digitalWrite(LYNX_D_LED, LOW);
+                break;
             default:
                 break;
-                delay(10);
         }
     });
     uros_client.onCreateEntities([&](rcl_node_t *node, rclc_support_t *support) {
@@ -82,7 +92,7 @@ Rover::Rover() {
             &timer,
             support,
             RCL_MS_TO_NS(timer_timeout),
-            [](rcl_timer_t *timer, int64_t last_call_time) {
+            [](rcl_timer_t * /*timer*/, int64_t /*last_call_time*/) {
                 RCSOFTCHECK(rcl_publish(&selfRover->publisher, &selfRover->msg, NULL));
                 selfRover->msg.data++;
             },
@@ -90,9 +100,16 @@ Rover::Rover() {
     });
     uros_client.onExecutorInit([&](rclc_executor_t *executor) {
         // Add timer to executor
-        RCCHECK(rclc_executor_add_timer(executor, &timer));
+        // NOTE: RCCHECK expands to 'return false' which is silently discarded
+        // in a void lambda. We must check manually.
+        rcl_ret_t rc = rclc_executor_add_timer(executor, &timer);
+        if (rc != RCL_RET_OK) {
+            printf("Failed to add timer to executor: %d\n", rc);
+            return;  // nmea_publisher_ready stays false
+        }
+        selfRover->nmea_publisher_ready = true;
 
-        RCCHECK(rclc_executor_add_subscription(
+        /*RCCHECK(rclc_executor_add_subscription(
             executor,
             &cmd_vel_sub,
             &cmd_vel_msg,
@@ -116,6 +133,7 @@ Rover::Rover() {
                 float left_motor_angular = left_wheel_angular * GEARBOX_RATIO;
                 float right_motor_angular = right_wheel_angular * GEARBOX_RATIO;
 
+                printf("Cmd Vel: v=%.2f m/s, w=%.2f rad/s\n", v, w);
                 // Example: set LEDs based on direction
                 // digitalWrite(LYNX_A_LED, left_motor_angular = 0 ? HIGH : LOW);
                 // digitalWrite(LYNX_B_LED, left_motor_angular > 0 ? HIGH : LOW);
@@ -123,14 +141,15 @@ Rover::Rover() {
                 // digitalWrite(LYNX_D_LED, right_motor_angular > 0 ? HIGH : LOW);
                 return;
             },
-            ON_NEW_DATA));
-
-        return true;
+            ON_NEW_DATA));*/
     });
 
     // Cleanup when connection is lost
     uros_client.onDestroyEntities([&](rcl_node_t *node, rclc_support_t *support) {
+        selfRover->nmea_publisher_ready = false;
+
         RCSOFTCHECK(rcl_publisher_fini(&publisher, node));
+        RCSOFTCHECK(rcl_publisher_fini(&nmea_publisher, node));
         RCSOFTCHECK(rcl_timer_fini(&timer));
         RCSOFTCHECK(rcl_subscription_fini(&cmd_vel_sub, node));
     });
@@ -157,17 +176,13 @@ Rover::Rover() {
 };
 
 void Rover::gnssReceiveTask(void *arg) {
-    Rover *self = (Rover *)arg;
+    Rover *self = static_cast<Rover *>(arg);
 
     // start uart port with UART_RX_PIN and UART_TX_PIN
     Serial2.begin(460800, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
     // Serial2.print("$PQTMCFGMSGRATE,W,GGA,1,1*58\r\n");
     // Serial2.print("$PAIR062,0,1*3F\r\n");
     self->sendNmeaCommand("PAIR062,0,1");
-
-    self->nmea_msg.sentence.data = (char *)malloc(82 + 1 * sizeof(char));
-    self->nmea_msg.sentence.size = 0;
-    self->nmea_msg.sentence.capacity = 82 + 1;  // 82 is the maximum length of NMEA sentences, +1 for null terminator
 
     while (true) {
         if (Serial2.available() < 1) {
@@ -221,13 +236,13 @@ void Rover::gnssReceiveTask(void *arg) {
                     break;
                 }
 
-                // printf("%s\n", line.c_str());
-
                 if (line.length() <= 82 && self->uros_client.isConnected()) {
                     memcpy(selfRover->nmea_msg.sentence.data, line.c_str(), line.length());
                     selfRover->nmea_msg.sentence.size = line.length();
 
-                    RCSOFTCHECK(rcl_publish(&selfRover->nmea_publisher, &selfRover->nmea_msg, NULL));
+                    if (selfRover->nmea_publisher_ready) {
+                        RCSOFTCHECK(rcl_publish(&selfRover->nmea_publisher, &selfRover->nmea_msg, NULL));
+                    }
                 }
                 break;
             }
@@ -259,7 +274,7 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
 
     switch (data[0]) {
         case MSG_TYPE_PAIR_REQ: {
-            if (pairingTaskHandle == nullptr) {
+            if (pairingTaskHandle.load() == nullptr) {
                 printf("Pairing request received from %02x:%02x:%02x:%02x:%02x:%02x, but not in pairing mode\n",
                        mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
                 return;
@@ -268,16 +283,23 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
             addPeer(mac_addr);
 
             uint8_t ack[] = {MSG_TYPE_PAIR_ACK};  // Answer pair request with ACK
-            esp_now_send(mac_addr, ack, sizeof(ack));
-            paired = true;
+            esp_err_t err = esp_now_send(mac_addr, ack, sizeof(ack));
+            if (err != ESP_OK) {
+                printf("Failed to send pairing ACK: %d\n", err);
+                digitalWrite(ERROR_LED, HIGH);
+                delay(100);
+                digitalWrite(ERROR_LED, LOW);
+                return;
+            }
+            paired.store(true);
             stopPairing();
             break;
         }
         case MSG_TYPE_RTCM:
-            //printf("RTCM %d bytes\n", len);
-            // Output all data except the 3 first bytes to Serial2
+            // printf("RTCM %d bytes\n", len);
+            //  Output all data except the 3 first bytes to Serial2
             if (len < 3) {
-                //printf("Received RTCM message too short: %d bytes\n", len);
+                // printf("Received RTCM message too short: %d bytes\n", len);
                 digitalWrite(ERROR_LED, HIGH);
                 delay(100);
                 digitalWrite(ERROR_LED, LOW);
@@ -288,9 +310,9 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
             Serial2.flush();                   // Ensure all data is sent immediately
             break;
         case MSG_TYPE_NMEA: {
-            //printf("NMEA %d bytes\n", len);
+            // printf("NMEA %d bytes\n", len);
             if (len < 4) {
-                //printf("Received NMEA message too short: %d bytes\n", len);
+                // printf("Received NMEA message too short: %d bytes\n", len);
                 digitalWrite(ERROR_LED, HIGH);
                 delay(100);
                 digitalWrite(ERROR_LED, LOW);
@@ -299,7 +321,7 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
 
             String nmeaStr((const char *)(data + 3), len - 3);
             // nmeaStr.trim();  // Remove any trailing whitespace
-            //printf("%s\n", nmeaStr.c_str());
+            // printf("%s\n", nmeaStr.c_str());
             break;
         }
         default:
@@ -317,20 +339,28 @@ void Rover::startPairing() {
 
     // addBroadcast();
 
-    xTaskCreate(
+    TaskHandle_t handle = nullptr;
+    BaseType_t result = xTaskCreate(
         pairingTask,
         "pairTask",
         3000,
         this,
         1,
-        &pairingTaskHandle);
+        &handle);
+    if (result != pdPASS) {
+        printf("Failed to create pairing task\n");
+        return;
+    }
+    pairingTaskHandle.store(handle);
 }
 
 void Rover::stopPairing() {
-    if (pairingTaskHandle != nullptr) {
-        vTaskDelete(pairingTaskHandle);
-        pairingTaskHandle = nullptr;
-        // removeBroadcast();
+    TaskHandle_t handle = pairingTaskHandle.load();
+    if (handle != nullptr) {
+        // Only delete from a DIFFERENT task context (e.g. button callback).
+        // pairingTask self-terminates via vTaskDelete(NULL) after cleanup.
+        vTaskDelete(handle);
+        pairingTaskHandle.store(nullptr);
     }
 
     digitalWrite(LYNX_A_LED, LOW);
@@ -338,19 +368,30 @@ void Rover::stopPairing() {
 }
 
 void Rover::pairingTask(void *arg) {
-    Rover *self = (Rover *)arg;
+    Rover *self = static_cast<Rover *>(arg);
     self->paired = false;
 
     digitalWrite(LYNX_A_LED, HIGH);
     digitalWrite(LYNX_B_LED, HIGH);
 
+    // Wait up to 60 seconds for pairing
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    while (!self->paired) {
-        // Wait 60 seconds for pairing requests
-        xTaskDelayUntil(&xLastWakeTime, 60000 / portTICK_RATE_MS);
+    xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(60000));
 
-        break;
-    }
+    // Cleanup before self-deletion
+    digitalWrite(LYNX_A_LED, LOW);
+    digitalWrite(LYNX_B_LED, LOW);
+    self->pairingTaskHandle.store(nullptr);
+    vTaskDelete(NULL);  // Delete self — nothing after this line executes
+}
 
-    self->stopPairing();
+void Rover::sendDebugMessage(const String &message) {
+    sendDebugMessage(message.c_str());
+}
+
+void Rover::sendDebugMessage(const char *message) {
+    USBSerial.write(DEBUG_MAGIC_BYTE);
+    USBSerial.print(message);
+    USBSerial.print("\n");
+    USBSerial.flush();
 }

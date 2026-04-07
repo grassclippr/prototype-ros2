@@ -1,6 +1,8 @@
 #ifndef UROS_CLIENT_H
 #define UROS_CLIENT_H
 
+#define RCUTILS_LOG_MIN_SEVERITY RCUTILS_LOG_SEVERITY_DEBUG
+
 #include <Stream.h>
 #include <micro_ros_platformio.h>
 #include <rcl/rcl.h>
@@ -9,19 +11,22 @@
 
 #include <functional>
 #include <vector>
+#include <atomic>
 
-#define RCCHECK(fn)                    \
-    {                                  \
-        rcl_ret_t temp_rc = fn;        \
-        if ((temp_rc != RCL_RET_OK)) { \
-            return false;              \
-        }                              \
+#define RCCHECK(fn)                                                                 \
+    {                                                                               \
+        rcl_ret_t temp_rc = fn;                                                     \
+        if ((temp_rc != RCL_RET_OK)) {                                              \
+            printf("Failed status on line %d: %d. Aborting.\n", __LINE__, temp_rc); \
+            return false;                                                           \
+        }                                                                           \
     }
-#define RCSOFTCHECK(fn)                \
-    {                                  \
-        rcl_ret_t temp_rc = fn;        \
-        if ((temp_rc != RCL_RET_OK)) { \
-        }                              \
+#define RCSOFTCHECK(fn)                                                            \
+    {                                                                               \
+        rcl_ret_t temp_rc = fn;                                                     \
+        if ((temp_rc != RCL_RET_OK)) {                                              \
+            printf("Soft check failed on line %d: %d\n", __LINE__, temp_rc);        \
+        }                                                                           \
     }
 
 enum ClientState {
@@ -49,7 +54,7 @@ class UrosClient {
     }
 
     bool isConnected() const {
-        return state == AGENT_CONNECTED;
+        return state.load() == AGENT_CONNECTED;
     }
 
    private:
@@ -60,7 +65,7 @@ class UrosClient {
     bool create_entities();
     void destroy_entities();
 
-    ClientState state = WAITING_AGENT;
+    std::atomic<ClientState> state{WAITING_AGENT};
     std::vector<std::function<void(ClientState)>> state_change_callbacks;
     std::vector<std::function<void(rcl_node_t *node, rclc_support_t *support)>> onCreateCallbacks;
     std::vector<std::function<void(rclc_executor_t *executor)>> onExecutorInitCallbacks;

@@ -199,9 +199,9 @@ void Basestation::stopPairing() {
 }
 
 void Basestation::pairingTask(void *arg) {
-    Basestation *self = (Basestation *)arg;
+    Basestation *self = static_cast<Basestation *>(arg);
     self->paired = false;
-    uint8_t tries = 0;
+    uint16_t tries = 0;
     uint8_t ch = 1;
 
     digitalWrite(LYNX_A_LED, HIGH);

@@ -5,9 +5,14 @@
 #include <std_msgs/msg/int32.h>
 #include <std_msgs/msg/string.h>
 
+#include <atomic>
+
 #include "tasks/leds/task.h"
 #include "tasks/motors/task.h"
 #include "tasks/uros/client.h"
+
+#define ROS_MAGIC_BYTE 0x5A
+#define DEBUG_MAGIC_BYTE 0xA5
 
 class Rover {
    public:
@@ -23,9 +28,14 @@ class Rover {
     static void pairingTask(void *arg);
     static void gnssReceiveTask(void *arg);
 
+    void sendDebugMessage(const String& message);
+    void sendDebugMessage(const char* message);
+
     void sendNmeaCommand(const String &cmd);
 
     // ROS communication
+    std::atomic<bool> nmea_publisher_ready{false};
+    
     rcl_timer_t timer;
     rcl_publisher_t publisher;
     std_msgs__msg__Int32 msg;
@@ -39,6 +49,6 @@ class Rover {
     // ESP-NOW communication
     void onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t len);
 
-    TaskHandle_t pairingTaskHandle = nullptr;
-    bool paired = false;
+    std::atomic<TaskHandle_t> pairingTaskHandle{nullptr};
+    std::atomic<bool> paired{false};
 };

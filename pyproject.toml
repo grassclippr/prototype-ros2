@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "microros-proxy"
+version = "0.1.0"
+description = "micro-ROS Proxy Service"
+authors = ["Claes 'Letharion' Gyllensvärd <letharion@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+pyserial = "^3.5"
+
+[build-system]
+requires = ["poetry-core>=2.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+microros-proxy = "microros_proxy:main"
