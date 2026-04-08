@@ -73,17 +73,40 @@ Rover::Rover() {
         }
     });
     uros_client.onCreateEntities([&](rcl_node_t *node, rclc_support_t *support) {
-        (void)support;
         msg.data = 0;
+        publisher = rcl_get_zero_initialized_publisher();
+        nmea_publisher = rcl_get_zero_initialized_publisher();
         cmd_vel_sub = rcl_get_zero_initialized_subscription();
         geometry_msgs__msg__Twist__init(&cmd_vel_msg);
+
+        rcl_ret_t rc = rclc_publisher_init_default(
+            &publisher,
+            node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
+            "baseboard");
+        if (rc != RCL_RET_OK) {
+            log_rcl_error("baseboard publisher init", rc);
+            return false;
+        }
+        baseboard_publisher_initialized = true;
+
+        rc = rclc_publisher_init_default(
+            &nmea_publisher,
+            node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(nmea_msgs, msg, Sentence),
+            "nmea_sentence");
+        if (rc != RCL_RET_OK) {
+            log_rcl_error("nmea publisher init", rc);
+            return false;
+        }
+        nmea_publisher_initialized = true;
 
         // Subscription creation can fail if the XRCE session isn't
         // fully ready yet.  Retry with a short delay to let the
         // session settle.
         constexpr int kMaxSubRetries = 3;
         constexpr int kSubRetryDelayMs = 500;
-        rcl_ret_t rc = RCL_RET_ERROR;
+        rc = RCL_RET_ERROR;
         for (int attempt = 1; attempt <= kMaxSubRetries; ++attempt) {
             if (attempt > 1) {
                 delay(kSubRetryDelayMs);
@@ -105,9 +128,28 @@ Rover::Rover() {
         }
         cmd_vel_sub_initialized = true;
 
+        const uint32_t timer_timeout = 1000;
+        rc = rclc_timer_init_default2(
+            &timer,
+            support,
+            RCL_MS_TO_NS(timer_timeout),
+            [](rcl_timer_t *timer, int64_t last_call_time) {
+                (void)timer;
+                (void)last_call_time;
+                RCSOFTCHECK(rcl_publish(&selfRover->publisher, &selfRover->msg, NULL));
+                selfRover->msg.data++;
+            },
+            true);
+        if (rc != RCL_RET_OK) {
+            log_rcl_error("baseboard timer init", rc);
+            return false;
+        }
+        timer_initialized = true;
+
         return true;
     });
     uros_client.onExecutorInit([&](rclc_executor_t *executor) {
+        RCCHECK(rclc_executor_add_timer(executor, &timer));
         RCCHECK(rclc_executor_add_subscription(
             executor,
             &cmd_vel_sub,
@@ -135,6 +177,14 @@ Rover::Rover() {
         if (timer_initialized) {
             RCSOFTCHECK(rcl_timer_fini(&timer));
             timer_initialized = false;
+        }
+        if (baseboard_publisher_initialized) {
+            RCSOFTCHECK(rcl_publisher_fini(&publisher, node));
+            baseboard_publisher_initialized = false;
+        }
+        if (nmea_publisher_initialized) {
+            RCSOFTCHECK(rcl_publisher_fini(&nmea_publisher, node));
+            nmea_publisher_initialized = false;
         }
         if (cmd_vel_sub_initialized) {
             RCSOFTCHECK(rcl_subscription_fini(&cmd_vel_sub, node));
