@@ -61,7 +61,16 @@ void Basestation::gnssReceiveTask(void *arg) {
     Serial2.begin(460800, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
     // Serial2.print("$PQTMCFGMSGRATE,W,GGA,1,1*58\r\n");
     // Serial2.print("$PAIR062,0,1*3F\r\n");
-    self->sendNmeaCommand("PAIR062,0,1");
+    self->sendNmeaCommand("PQTMCFGRCVRMODE,W,2"); // Set receiver to base mode (output RTCM corrections)'
+    delay(100);
+    self->sendNmeaCommand("PQTMCFGMSGRATE,W,PQTMSVINSTATUS,1,1"); // Enable survey-in status messages at 1 Hz
+    self->sendNmeaCommand("PAIR062,0,1"); 
+    self->sendNmeaCommand("QTMSAVEPAR"); // Save settings to non-volatile memory, so they persist after reboot
+
+    // Query current survey-in configuration
+    self->sendNmeaCommand("PQTMCFGSVIN,R");
+    self->svin.query_sent = true;
+    printf("[SVIN] Querying survey-in config...\n");
 
     while (true) {
         if (Serial2.available() < 1) {
@@ -109,8 +118,18 @@ void Basestation::gnssReceiveTask(void *arg) {
 
                 printf("[RTCM] len=%d id=%d\n", length, id);
 
+                // Reconstruct full RTCM frame: 0xD3 + 2-byte length + payload + 3-byte CRC
+                // The rover GNSS module needs the complete framed message.
+                std::vector<uint8_t> frame;
+                frame.reserve(3 + length + 3);
+                frame.push_back(0xD3);
+                frame.push_back(l1);
+                frame.push_back(l2);
+                frame.insert(frame.end(), buf.begin(), buf.end());
+                frame.insert(frame.end(), checksum, checksum + 3);
+
                 // Send it to our peer
-                sendRtcmOverEspNow(buf.data(), buf.size());
+                sendRtcmOverEspNow(frame.data(), frame.size());
                 break;
             }
             case '$': {
@@ -136,6 +155,53 @@ void Basestation::gnssReceiveTask(void *arg) {
                 if (line.indexOf("ERROR") != -1 && parts.size() >= 3) {
                     printf("[ERROR] command=%s error=%s\n", parts[0].c_str(), parts[2].c_str());
                 }
+
+                // Parse PQTMCFGSVIN responses
+                if (line.startsWith("$PQTMCFGSVIN")) {
+                    if (parts.size() >= 2 && parts[1] == "OK" && parts.size() >= 8) {
+                        // GET response: $PQTMCFGSVIN,OK,<mode>,<minDur>,<accLimit>,<X>,<Y>,<Z>
+                        int mode       = parts[2].toInt();
+                        int min_dur    = parts[3].toInt();
+                        float acc_limit = parts[4].toFloat();
+                        self->svin.mode      = mode;
+                        self->svin.min_dur   = min_dur;
+                        self->svin.acc_limit = acc_limit;
+
+                        const char *mode_str;
+                        switch (mode) {
+                            case 0:  mode_str = "disabled";   break;
+                            case 1:  mode_str = "survey-in";  break;
+                            case 2:  mode_str = "fixed";      break;
+                            default: mode_str = "unknown";    break;
+                        }
+                        printf("[SVIN] Config: mode=%s minDur=%ds accLimit=%.1fm\n",
+                               mode_str, min_dur, acc_limit);
+
+                        // Start survey-in if not already configured
+                        if (mode != 1 && !self->svin.start_sent) {
+                            printf("[SVIN] Starting survey-in (minDur=60s, accLimit=5.0m)\n");
+                            self->sendNmeaCommand("PQTMCFGSVIN,W,1,60,5.0,0.0,0.0,0.0");
+                            self->svin.start_sent = true;
+                        }
+                    } else if (parts.size() >= 2 && parts[1].startsWith("OK")) {
+                        // SET response: $PQTMCFGSVIN,OK
+                        printf("[SVIN] Command accepted\n");
+                    } else if (parts.size() >= 2 && parts[1] == "ERROR") {
+                        printf("[SVIN] Error: %s\n", parts.size() >= 3 ? parts[2].c_str() : "?");
+                    }
+                }
+
+                // Parse PQTMSVIN runtime status (survey-in progress)
+                if (line.startsWith("$PQTMSVIN") && parts.size() >= 6) {
+                    // $PQTMSVIN,<iTOW>,<dur>,<meanAcc>,<obs>,<valid>
+                    int    dur      = parts[2].toInt();
+                    float  mean_acc = parts[3].toFloat();
+                    int    obs      = parts[4].toInt();
+                    int    valid    = parts[5].toInt();
+                    printf("[SVIN] Progress: dur=%ds meanAcc=%.2fm obs=%d valid=%d\n",
+                           dur, mean_acc, obs, valid);
+                }
+
                 printf("%s\n", line.c_str());
                 break;
             }

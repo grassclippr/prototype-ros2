@@ -22,4 +22,12 @@ class Basestation {
 
     TaskHandle_t pairingTaskHandle = nullptr;
     bool paired = false;
+
+    struct SvinState {
+        int  mode         = -1;   // -1=unknown, 0=disabled, 1=survey-in, 2=fixed
+        int  min_dur      = -1;
+        float acc_limit   = -1.0f;
+        bool query_sent   = false;
+        bool start_sent   = false;
+    } svin;
 };

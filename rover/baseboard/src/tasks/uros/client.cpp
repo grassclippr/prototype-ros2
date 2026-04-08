@@ -11,7 +11,6 @@
 #endif
 #if SERIAL_MUX_ENABLE
 #include "./serial_mux.h"
-#include "./serial_mux_debug.h"
 #include "./serial_mux_transport.h"
 #endif
 
@@ -143,7 +142,6 @@ void UrosClient::destroy_entities() {
 void UrosClient::setup(Stream & stream) {
     #if SERIAL_MUX_ENABLE
     static serial_mux::SerialMux mux(stream);
-    serial_mux::set_debug_mux(&mux);
 
     rmw_uros_set_custom_transport(
         SERIAL_MUX_PACKET_MODE ? MICROROS_TRANSPORTS_PACKET_MODE : MICROROS_TRANSPORTS_FRAMING_MODE,

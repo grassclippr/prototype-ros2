@@ -122,59 +122,6 @@ size_t SerialMux::writeRos(const uint8_t *data, size_t len) {
     return len;
 }
 
-void SerialMux::writeDebug(const uint8_t *data, size_t len) {
-    if (!data || len == 0) {
-        return;
-    }
-
-    uint16_t msg_id = static_cast<uint16_t>(debug_msg_id_ + 1u);
-    debug_msg_id_ = msg_id;
-
-    size_t offset = 0;
-    while (offset < len) {
-        size_t chunk = len - offset;
-        if (chunk > kMaxPayload) {
-            chunk = kMaxPayload;
-        }
-        uint8_t flags = 0;
-        if (len > kMaxPayload) {
-            flags |= kFlagChunked;
-            if (offset == 0) {
-                flags |= kFlagChunkStart;
-            }
-            if (offset + chunk >= len) {
-                flags |= kFlagChunkEnd;
-            }
-        }
-        writeFrame(kTypeDebug, flags, msg_id, data + offset, chunk);
-        offset += chunk;
-    }
-}
-
-int SerialMux::writeDebugf(const char *fmt, ...) {
-    if (!fmt) {
-        return 0;
-    }
-
-    char buffer[512];
-    va_list args;
-    va_start(args, fmt);
-    int written = vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
-
-    if (written <= 0) {
-        return written;
-    }
-
-    size_t len = static_cast<size_t>(written);
-    if (len >= sizeof(buffer)) {
-        len = sizeof(buffer) - 1;
-    }
-
-    writeDebug(reinterpret_cast<const uint8_t *>(buffer), len);
-    return written;
-}
-
 size_t SerialMux::readRos(uint8_t *data, size_t len, int timeout_ms) {
     if (!data || len == 0) {
         return 0;
