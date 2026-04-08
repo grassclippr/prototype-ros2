@@ -143,10 +143,51 @@ Rover::Rover() {
         }
         timer_initialized = true;
 
+        // Wheel velocity publisher (measured from encoders)
+        odom_vel_publisher = rcl_get_zero_initialized_publisher();
+        geometry_msgs__msg__Twist__init(&odom_vel_msg);
+        rc = rclc_publisher_init_default(
+            &odom_vel_publisher,
+            node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
+            "/wheel_velocities");
+        if (rc != RCL_RET_OK) {
+            log_rcl_error("odom_vel publisher init", rc);
+            return false;
+        }
+        odom_vel_publisher_initialized = true;
+
+        // 20 Hz timer to publish encoder feedback
+        odom_vel_timer = rcl_get_zero_initialized_timer();
+        rc = rclc_timer_init_default2(
+            &odom_vel_timer,
+            support,
+            RCL_MS_TO_NS(50),  // 50ms = 20Hz
+            [](rcl_timer_t *timer, int64_t last_call_time) {
+                (void)timer;
+                (void)last_call_time;
+                auto left  = selfRover->motors.getLeftWheel();
+                auto right = selfRover->motors.getRightWheel();
+
+                selfRover->odom_vel_msg.linear.x = (left.velocity_mps + right.velocity_mps) * 0.5;
+                selfRover->odom_vel_msg.angular.z = (right.velocity_mps - left.velocity_mps) / TRACK_WIDTH_METERS;
+                selfRover->odom_vel_msg.linear.y = left.velocity_mps;   // per-wheel debug
+                selfRover->odom_vel_msg.linear.z = right.velocity_mps;  // per-wheel debug
+
+                RCSOFTCHECK(rcl_publish(&selfRover->odom_vel_publisher, &selfRover->odom_vel_msg, NULL));
+            },
+            true);
+        if (rc != RCL_RET_OK) {
+            log_rcl_error("odom_vel timer init", rc);
+            return false;
+        }
+        odom_vel_timer_initialized = true;
+
         return true;
     });
     uros_client.onExecutorInit([&](rclc_executor_t *executor) {
         RCCHECK(rclc_executor_add_timer(executor, &timer));
+        RCCHECK(rclc_executor_add_timer(executor, &odom_vel_timer));
         RCCHECK(rclc_executor_add_subscription(
             executor,
             &cmd_vel_sub,
@@ -186,6 +227,14 @@ Rover::Rover() {
         if (cmd_vel_sub_initialized) {
             RCSOFTCHECK(rcl_subscription_fini(&cmd_vel_sub, node));
             cmd_vel_sub_initialized = false;
+        }
+        if (odom_vel_timer_initialized) {
+            RCSOFTCHECK(rcl_timer_fini(&odom_vel_timer));
+            odom_vel_timer_initialized = false;
+        }
+        if (odom_vel_publisher_initialized) {
+            RCSOFTCHECK(rcl_publisher_fini(&odom_vel_publisher, node));
+            odom_vel_publisher_initialized = false;
         }
     });
 
@@ -236,8 +285,11 @@ void Rover::gnssReceiveTask(void *arg) {
     // Serial2.print("$PQTMCFGMSGRATE,W,GGA,1,1*58\r\n");
     // Serial2.print("$PAIR062,0,1*3F\r\n");
     self->sendNmeaCommand("PQTMCFGRCVRMODE,W,1"); // Set receiver to rover mode (accept RTCM corrections)
+    delay(100);
     self->sendNmeaCommand("PAIR062,0,1");
+    delay(30);
     self->sendNmeaCommand("QTMSAVEPAR"); // Save settings to non-volatile memory, so they persist after reboot
+    delay(100);
 
     self->nmea_msg.sentence.data = (char *)malloc(82 + 1 * sizeof(char));
     self->nmea_msg.sentence.size = 0;
