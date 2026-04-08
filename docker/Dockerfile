@@ -77,9 +77,6 @@ RUN chmod +x /root/workspace.sh /root/entrypoint.sh
 
 WORKDIR /root
 
-# Ensure the ROS 2 workspace is sourced in every new shell
-RUN echo "source /root/ros2_ws/install/setup.bash" >> /root/.bashrc
-
 # Set the entrypoint for the container
 # This script will be run every time the container starts
 ENTRYPOINT ["/root/entrypoint.sh"]

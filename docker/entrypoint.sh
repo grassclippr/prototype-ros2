@@ -26,15 +26,6 @@ else
     echo "✅ Found existing $ROS_DOMAIN_ID_FILE"
 fi
 
-# Add ROS_DOMAIN_ID to .bashrc if missing
-if ! grep -q "export ROS_DOMAIN_ID" /root/.bashrc; then
-  ros_domain_id=$(cat "$ROS_DOMAIN_ID_FILE")
-  echo "🔧 Adding ROS_DOMAIN_ID=$ros_domain_id to .bashrc"
-  echo "export ROS_DOMAIN_ID=$ros_domain_id" >> /root/.bashrc
-else
-  echo "✅ ROS_DOMAIN_ID already set in .bashrc"
-fi
-
 # Export domain ID for this session
 export ROS_DOMAIN_ID=$(cat "$ROS_DOMAIN_ID_FILE")
 echo "🌐 ROS_DOMAIN_ID set to \"$ROS_DOMAIN_ID\""
@@ -51,19 +42,7 @@ fi
 
 # Source workspace setup now that it exists.
 echo "📦 Sourcing local workspace: $ROS_WS/install/setup.bash"
-source $ROS_WS/install/setup.bash
-
-# Source updated .bashrc
-echo "🔁 Reloading /root/.bashrc"
-source /root/.bashrc
-
-# Return to home
-cd
-echo "🏠 Returned to home directory"
-
-# Reload environment one last time
-echo "🔁 Final .bashrc reload"
-source /root/.bashrc
+source "$ROS_WS/install/setup.bash"
 
 echo "🚀 Entrypoint setup complete. Executing: $@"
 

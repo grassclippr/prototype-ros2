@@ -30,15 +30,8 @@ void setup() {
 #endif
 
     nvs.begin("core", false);
-    const int stored_role = nvs.getInt("role", static_cast<int>(ROLE_ROVER));
+    device_role = static_cast<DeviceRole>(nvs.getInt("role", static_cast<int>(ROLE_ROVER)));
     nvs.end();
-
-    if (stored_role != static_cast<int>(ROLE_ROVER)) {
-        nvs.begin("core", false);
-        nvs.putInt("role", static_cast<int>(ROLE_ROVER));
-        nvs.end();
-    }
-    device_role = ROLE_ROVER;
 
     switch (device_role) {
           case ROLE_BASESTATION:

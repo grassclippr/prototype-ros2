@@ -1,3 +1,8 @@
+.env
+.make/
+.hypothesis/
+__pycache__/
+fuzzing/__pycache__/
 /.vscode
 /.embuild
 /target

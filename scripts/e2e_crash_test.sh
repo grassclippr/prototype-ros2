@@ -61,6 +61,21 @@ wait_for_pattern_in_command() {
   done
 }
 
+wait_for_crash_dump() {
+  local timeout_s="$1"
+  timeout "${timeout_s}s" "${COMPOSE_WORDS[@]}" logs -f serial_mux_proxy 2>&1 | awk '
+    /Initiating deliberate crash/ { seen_init = 1 }
+    /Guru Meditation Error/ || /Backtrace:/ {
+      if (seen_init) {
+        exit 0
+      }
+    }
+    END {
+      exit 1
+    }
+  '
+}
+
 # Ensure cleanup runs on script exit, interrupt, or error
 trap cleanup EXIT INT TERM
 
@@ -118,7 +133,7 @@ echo "Monitoring proxy logs for crash dump..."
 echo "========================================="
 
 # We expect the ESP32 to crash 60 seconds after boot.
-if wait_for_pattern_in_command 80 'Guru Meditation Error|Backtrace:' "${COMPOSE_CMD} logs --tail 200 serial_mux_proxy"; then
+if wait_for_crash_dump 80; then
     echo "✅ E2E Crash Test PASSED: Crash dump was successfully received and decoded by proxy."
     exit 0
 else

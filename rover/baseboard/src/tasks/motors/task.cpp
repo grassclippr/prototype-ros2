@@ -3,10 +3,6 @@
 #include <Arduino.h>
 #include <cmath>
 
-#include "tasks/uros/serial_mux_debug.h"
-
-#define printf serial_mux::debug_printf
-
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -74,12 +70,6 @@ void configurePwmChannel(ledc_channel_t channel, gpio_num_t pin) {
 }  // namespace
 
 void MotorControl::setup() {
-    printf("motor setup: pwm=%luHz track=%.2fm inverted(L,R)=(%d,%d)\n",
-           static_cast<unsigned long>(PWM_FREQUENCY_HZ),
-           static_cast<double>(TRACK_WIDTH_METERS),
-           LEFT_MOTOR_INVERTED ? 1 : 0,
-           RIGHT_MOTOR_INVERTED ? 1 : 0);
-
     gpio_config_t enable_pin_config = {};
     enable_pin_config.pin_bit_mask = (1ULL << RIGHT_ENABLE_PIN) | (1ULL << LEFT_ENABLE_PIN);
     enable_pin_config.mode = GPIO_MODE_OUTPUT;
@@ -150,12 +140,6 @@ void MotorControl::applyWheelOutputs(float left_speed, float right_speed) {
     const uint32_t left_duty = dutyForSpeed(left_speed);
     const uint32_t right_duty = dutyForSpeed(right_speed);
 
-    printf("motor outputs: left=%.3f m/s right=%.3f m/s duty(L,R)=(%lu,%lu)\n",
-           static_cast<double>(left_speed),
-           static_cast<double>(right_speed),
-           static_cast<unsigned long>(left_duty),
-           static_cast<unsigned long>(right_duty));
-
     writeDuty(LEFT_FORWARD_CHANNEL, left_speed > 0.0f ? left_duty : 0U);
     writeDuty(LEFT_REVERSE_CHANNEL, left_speed < 0.0f ? left_duty : 0U);
     writeDuty(RIGHT_FORWARD_CHANNEL, right_speed > 0.0f ? right_duty : 0U);
@@ -182,7 +166,6 @@ void MotorControl::setCommand(float linear_x, float angular_z, uint32_t seq, uin
 }
 
 void MotorControl::stop() {
-    printf("motor stop\n");
     linear_x_ = 0.0f;
     angular_z_ = 0.0f;
     active_ = false;
@@ -201,9 +184,6 @@ bool MotorControl::expireIfTimedOut(uint32_t now_ms, uint32_t *expired_seq) {
     if (expired_seq != nullptr) {
         *expired_seq = seq_;
     }
-    printf("motor command timed out: seq=%lu timeout_ms=%lu\n",
-           static_cast<unsigned long>(seq_),
-           static_cast<unsigned long>(timeout_ms_));
     stop();
     return true;
 }
