@@ -1,9 +1,6 @@
 #include "./rover.h"
 
-#include "tasks/uros/serial_mux_debug.h"
 #include "tasks/uros/error.h"
-
-#define printf serial_mux::debug_printf
 
 #include <cmath>
 
@@ -238,11 +235,15 @@ void Rover::gnssReceiveTask(void *arg) {
     Serial2.begin(460800, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
     // Serial2.print("$PQTMCFGMSGRATE,W,GGA,1,1*58\r\n");
     // Serial2.print("$PAIR062,0,1*3F\r\n");
+    self->sendNmeaCommand("PQTMCFGRCVRMODE,W,1"); // Set receiver to rover mode (accept RTCM corrections)
     self->sendNmeaCommand("PAIR062,0,1");
+    self->sendNmeaCommand("QTMSAVEPAR"); // Save settings to non-volatile memory, so they persist after reboot
 
     self->nmea_msg.sentence.data = (char *)malloc(82 + 1 * sizeof(char));
     self->nmea_msg.sentence.size = 0;
     self->nmea_msg.sentence.capacity = 82 + 1;  // 82 is the maximum length of NMEA sentences, +1 for null terminator
+
+    uint32_t last_status_print_ms = 0;
 
     while (true) {
         if (Serial2.available() < 1) {
@@ -296,8 +297,6 @@ void Rover::gnssReceiveTask(void *arg) {
                     break;
                 }
 
-                // printf("%s\n", line.c_str());
-
                 if (line.length() <= 82 && self->uros_client.isConnected() && self->nmea_publisher_initialized) {
                     memcpy(selfRover->nmea_msg.sentence.data, line.c_str(), line.length());
                     selfRover->nmea_msg.sentence.size = line.length();
@@ -332,9 +331,9 @@ void Rover::heartbeatTask(void *arg) {
 
     uint32_t counter = 0;
     while (true) {
-        printf("heartbeat %lu\n", static_cast<unsigned long>(counter));
+        printf("h%lu\n", static_cast<unsigned long>(counter));
         counter++;
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
     }
 }
 
@@ -376,7 +375,7 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
             break;
         }
         case MSG_TYPE_RTCM:
-            //printf("RTCM %d bytes\n", len);
+            //printf("Base RTCM %d bytes\n", len);
             // Output all data except the 3 first bytes to Serial2
             if (len < 3) {
                 //printf("Received RTCM message too short: %d bytes\n", len);
@@ -390,7 +389,7 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
             Serial2.flush();                   // Ensure all data is sent immediately
             break;
         case MSG_TYPE_NMEA: {
-            //printf("NMEA %d bytes\n", len);
+            //printf("Base NMEA %d bytes\n", len);
             if (len < 4) {
                 //printf("Received NMEA message too short: %d bytes\n", len);
                 digitalWrite(ERROR_LED, HIGH);
@@ -400,8 +399,8 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
             }
 
             String nmeaStr((const char *)(data + 3), len - 3);
-            // nmeaStr.trim();  // Remove any trailing whitespace
-            //printf("%s\n", nmeaStr.c_str());
+            nmeaStr.trim();  // Remove any trailing whitespace
+            printf("BASE: %s\n", nmeaStr.c_str());
             break;
         }
         default:

@@ -3,10 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "serial_mux_debug.h"
-
-#define printf serial_mux::debug_printf
-
 namespace {
 
 constexpr size_t kMaxErrorBytes = 96;
