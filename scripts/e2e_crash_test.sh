@@ -31,16 +31,22 @@ cleanup() {
 
     # Re-flash without the crash test flag
     echo "Flashing standard firmware..."
+    activate_platformio
     PIO_BUILD_FLAGS="" pio run -t upload -d "$PIO_PROJECT" >/dev/null 2>&1 || echo "Warning: Restore flash failed."
 
     # Restart services
-    compose up -d core serial_mux_proxy micro_ros_agent >/dev/null 2>&1 || true
+    BAUDRATE="${BAUDRATE}" SERIAL_DEV="${SERIAL_DEV}" PROXY_PORT="${PROXY_PORT:-8888}" compose up -d core serial_mux_proxy micro_ros_agent >/dev/null 2>&1 || true
 
     echo "Restore complete."
 }
 
 compose() {
   "${COMPOSE_WORDS[@]}" "$@"
+}
+
+activate_platformio() {
+  # Keep crash-test flashing self-contained instead of depending on caller PATH.
+  source ~/.platformio/penv/bin/activate
 }
 
 wait_for_pattern_in_command() {
@@ -61,19 +67,38 @@ wait_for_pattern_in_command() {
   done
 }
 
-wait_for_crash_dump() {
-  local timeout_s="$1"
-  timeout "${timeout_s}s" "${COMPOSE_WORDS[@]}" logs -f serial_mux_proxy 2>&1 | awk '
+command_output_contains_crash_dump() {
+  local command="$1"
+  sh -c "${command}" 2>/dev/null | awk '
     /Initiating deliberate crash/ { seen_init = 1 }
     /Guru Meditation Error/ || /Backtrace:/ {
       if (seen_init) {
-        exit 0
+        found = 1
+        exit
       }
     }
     END {
-      exit 1
+      exit(found ? 0 : 1)
     }
   '
+}
+
+wait_for_crash_dump() {
+  local timeout_s="$1"
+  local start_ts now_ts command
+  command="${COMPOSE_CMD} logs --tail 200 serial_mux_proxy"
+
+  start_ts="$(date +%s)"
+  while true; do
+    if command_output_contains_crash_dump "${command}"; then
+      return 0
+    fi
+    now_ts="$(date +%s)"
+    if [ $((now_ts - start_ts)) -ge "${timeout_s}" ]; then
+      return 1
+    fi
+    sleep 1
+  done
 }
 
 # Ensure cleanup runs on script exit, interrupt, or error
@@ -87,12 +112,13 @@ compose down || true
 echo "========================================="
 echo "Building and flashing CRASH TEST firmware (60s delay)"
 echo "========================================="
+activate_platformio
 PIO_BUILD_FLAGS="-D E2E_CRASH_TEST" pio run -t upload -d "$PIO_PROJECT"
 
 echo "========================================="
 echo "Starting Podman services (Proxy, Agent, Core)"
 echo "========================================="
-compose up -d core serial_mux_proxy micro_ros_agent
+BAUDRATE="${BAUDRATE}" SERIAL_DEV="${SERIAL_DEV}" PROXY_PORT="${PROXY_PORT:-8888}" compose up -d core serial_mux_proxy micro_ros_agent
 
 echo "========================================="
 echo "Waiting for Serial Activity (Heartbeat)..."
