@@ -1,9 +1,5 @@
 #include "./base.h"
 
-#include "tasks/uros/serial_mux_debug.h"
-
-#define printf serial_mux::debug_printf
-
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
@@ -15,7 +11,7 @@ static Basestation *selfBasestation = nullptr;
 Basestation::Basestation() {
     selfBasestation = this;
 
-    //leds.setup();
+    leds.setup();
     //leds.status_led.blink2();
 
     leds.bootButton.attachClick([]() {
@@ -44,6 +40,9 @@ Basestation::Basestation() {
         // Make sure to load the stored MAC from NVS
         loadPeerFromNVS();
     }
+
+    // Indicate BASE mode
+    digitalWrite(TWAI_LED, HIGH);
 
     // Start GNSS receive task
     xTaskCreate(
