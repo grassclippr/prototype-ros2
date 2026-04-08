@@ -16,6 +16,8 @@ read -r -a COMPOSE_WORDS <<< "${COMPOSE_CMD}"
 HOST_OS="$(uname -s)"
 HOST_PROXY_LOG=""
 HOST_PROXY_PID=""
+BUILD_CORE_IMAGE=0
+CORE_IMAGE_STAMP="${SCRIPT_DIR}/../.make/core-image-inputs.stamp"
 
 compose() {
   "${COMPOSE_WORDS[@]}" "$@"
@@ -67,6 +69,10 @@ if [ ! -e "${SERIAL_DEV}" ]; then
   exit 1
 fi
 
+if "${SCRIPT_DIR}/core_image_needs_rebuild.sh"; then
+  BUILD_CORE_IMAGE=1
+fi
+
 if [ "${HOST_OS}" = "Darwin" ]; then
   if ! command -v python3 >/dev/null 2>&1; then
     echo "error: python3 is required to run the host serial proxy on macOS" >&2
@@ -75,7 +81,13 @@ if [ "${HOST_OS}" = "Darwin" ]; then
   HOST_PROXY_LOG="$(mktemp -t serial-mux-proxy)"
   recreate_stack
   echo "Starting containers (core, agent) and host serial proxy..."
-  BAUDRATE="${BAUDRATE}" PROXY_PORT="${PROXY_PORT}" compose up -d --build core micro_ros_agent
+  if [ "${BUILD_CORE_IMAGE}" = "1" ]; then
+    BAUDRATE="${BAUDRATE}" PROXY_PORT="${PROXY_PORT}" compose up -d --build core micro_ros_agent
+    mkdir -p "$(dirname "${CORE_IMAGE_STAMP}")"
+    touch "${CORE_IMAGE_STAMP}"
+  else
+    BAUDRATE="${BAUDRATE}" PROXY_PORT="${PROXY_PORT}" compose up -d core micro_ros_agent
+  fi
   echo "Starting host serial proxy..."
   PYTHONUNBUFFERED=1 PYTHONPATH=. python3 -u serial_mux_proxy.py \
     "${SERIAL_DEV}" "${PROXY_PORT}" "${BAUDRATE}" --agent-host 127.0.0.1 \
@@ -84,7 +96,13 @@ if [ "${HOST_OS}" = "Darwin" ]; then
 else
   recreate_stack
   echo "Starting containers (core, proxy, agent)..."
-  BAUDRATE="${BAUDRATE}" SERIAL_DEV="${SERIAL_DEV}" PROXY_PORT="${PROXY_PORT}" compose up -d --build core serial_mux_proxy micro_ros_agent
+  if [ "${BUILD_CORE_IMAGE}" = "1" ]; then
+    BAUDRATE="${BAUDRATE}" SERIAL_DEV="${SERIAL_DEV}" PROXY_PORT="${PROXY_PORT}" compose up -d --build core serial_mux_proxy micro_ros_agent
+    mkdir -p "$(dirname "${CORE_IMAGE_STAMP}")"
+    touch "${CORE_IMAGE_STAMP}"
+  else
+    BAUDRATE="${BAUDRATE}" SERIAL_DEV="${SERIAL_DEV}" PROXY_PORT="${PROXY_PORT}" compose up -d core serial_mux_proxy micro_ros_agent
+  fi
 fi
 
 echo "Waiting for heartbeat output (timeout: ${HEARTBEAT_TIMEOUT}s)..."
