@@ -41,6 +41,11 @@ baseboard-clean:
 	@source ~/.platformio/penv/bin/activate && pio run -d $(PIO_PROJECT) -t clean
 	@source ~/.platformio/penv/bin/activate && pio run -d $(PIO_PROJECT) -t clean_microros
 
+.PHONY: flash-rebuild-microros
+flash-rebuild-microros:
+	rm -rf $(PIO_PROJECT)/.pio/libdeps/LynxAdapter_v1_0/micro_ros_platformio/libmicroros
+	@PIO_PROJECT=$(PIO_PROJECT) scripts/flash_with_restore.sh
+
 .PHONY: flash-no-ros
 flash-no-ros:
 	@PIO_PROJECT=$(PIO_PROJECT) SERIAL_DEV=$(SERIAL_DEV) UPLOAD_PORT=$(UPLOAD_PORT) PROXY_PORT=$(PROXY_PORT) PIO_BUILD_FLAGS="-DSERIAL_MUX_DISABLE_ROS=1" scripts/flash_with_restore.sh
