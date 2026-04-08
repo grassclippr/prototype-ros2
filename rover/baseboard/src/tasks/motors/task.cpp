@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "driver/gpio.h"
+#include "hardware.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -30,10 +31,11 @@ constexpr bool MOTOR_ENABLE_ACTIVE_HIGH = true;
 constexpr bool LEFT_MOTOR_INVERTED = false;
 constexpr bool RIGHT_MOTOR_INVERTED = true;
 
-// Keep the initial bring-up conservative.
-constexpr float TRACK_WIDTH_METERS = 0.66f;
-constexpr float MAX_WHEEL_LINEAR_SPEED_MPS = 0.20f;
 constexpr float COMMAND_DEADBAND_MPS = 0.01f;
+
+// Encoder pins (single-channel, asymmetric — count rising edges only)
+constexpr gpio_num_t LEFT_ENCODER_PIN  = static_cast<gpio_num_t>(I2C_SDA_PIN);
+constexpr gpio_num_t RIGHT_ENCODER_PIN = static_cast<gpio_num_t>(I2C_SCL_PIN);
 
 void setEnablePin(gpio_num_t pin, bool enabled) {
     const int level = (enabled == MOTOR_ENABLE_ACTIVE_HIGH) ? 1 : 0;
@@ -43,15 +45,6 @@ void setEnablePin(gpio_num_t pin, bool enabled) {
 void writeDuty(ledc_channel_t channel, uint32_t duty) {
     ledc_set_duty(PWM_MODE, channel, duty);
     ledc_update_duty(PWM_MODE, channel);
-}
-
-uint32_t dutyForSpeed(float speed_mps) {
-    const float normalized = std::fmin(std::fabs(speed_mps) / MAX_WHEEL_LINEAR_SPEED_MPS, 1.0f);
-    return static_cast<uint32_t>(normalized * static_cast<float>(PWM_MAX_DUTY));
-}
-
-float applyMotorPolarity(float wheel_speed, bool inverted) {
-    return inverted ? -wheel_speed : wheel_speed;
 }
 
 void configurePwmChannel(ledc_channel_t channel, gpio_num_t pin) {
@@ -65,7 +58,83 @@ void configurePwmChannel(ledc_channel_t channel, gpio_num_t pin) {
     config.hpoint = 0;
     ledc_channel_config(&config);
 }
+
+void initPcntUnit(pcnt_unit_t unit, gpio_num_t pin) {
+    pcnt_config_t config = {};
+    config.pulse_gpio_num = pin;
+    config.ctrl_gpio_num  = PCNT_PIN_NOT_USED;
+    config.lctrl_mode     = PCNT_MODE_KEEP;
+    config.hctrl_mode     = PCNT_MODE_KEEP;
+    config.pos_mode       = PCNT_COUNT_INC;  // count on rising edge
+    config.neg_mode       = PCNT_COUNT_DIS;  // ignore falling edge (asymmetric)
+    config.counter_h_lim  = 32767;
+    config.counter_l_lim  = -1;
+    config.unit           = unit;
+    config.channel        = PCNT_CHANNEL_0;
+    ESP_ERROR_CHECK(pcnt_unit_config(&config));
+
+    // Optional glitch filter — ignore pulses shorter than ~1 us (80 APB clocks)
+    ESP_ERROR_CHECK(pcnt_set_filter_value(unit, 80));
+    ESP_ERROR_CHECK(pcnt_filter_enable(unit));
+
+    ESP_ERROR_CHECK(pcnt_counter_pause(unit));
+    ESP_ERROR_CHECK(pcnt_counter_clear(unit));
+    ESP_ERROR_CHECK(pcnt_counter_resume(unit));
+}
 }  // namespace
+
+void MotorControl::setupEncoders() {
+    initPcntUnit(LEFT_PCNT_UNIT, LEFT_ENCODER_PIN);
+    initPcntUnit(RIGHT_PCNT_UNIT, RIGHT_ENCODER_PIN);
+    printf("PCNT encoders initialized (left=GPIO%d, right=GPIO%d)\n",
+           LEFT_ENCODER_PIN, RIGHT_ENCODER_PIN);
+}
+
+void MotorControl::readEncoders(float dt) {
+    int16_t left_count = 0, right_count = 0;
+    pcnt_get_counter_value(LEFT_PCNT_UNIT, &left_count);
+    pcnt_counter_clear(LEFT_PCNT_UNIT);
+    pcnt_get_counter_value(RIGHT_PCNT_UNIT, &right_count);
+    pcnt_counter_clear(RIGHT_PCNT_UNIT);
+
+    // Infer sign from last commanded PWM direction
+    float left_sign  = (last_left_dir_ >= 0.0f) ? 1.0f : -1.0f;
+    float right_sign = (last_right_dir_ >= 0.0f) ? 1.0f : -1.0f;
+
+    int left_signed  = static_cast<int>(left_sign)  * left_count;
+    int right_signed = static_cast<int>(right_sign) * right_count;
+
+    // Accumulate absolute ticks
+    left_wheel_.ticks  += left_signed;
+    right_wheel_.ticks += right_signed;
+
+    // Compute raw velocity and push into moving average
+    float left_raw_vel  = (static_cast<float>(left_signed)  / TICKS_PER_METER) / dt;
+    float right_raw_vel = (static_cast<float>(right_signed) / TICKS_PER_METER) / dt;
+
+    left_vel_avg_.push(left_raw_vel);
+    right_vel_avg_.push(right_raw_vel);
+
+    left_wheel_.velocity_mps  = left_vel_avg_.average();
+    right_wheel_.velocity_mps = right_vel_avg_.average();
+}
+
+float MotorControl::piControl(float setpoint, float measured, PiState &pi) {
+    float error = setpoint - measured;
+
+    pi.integral += error * CONTROL_PERIOD_S;
+    // Anti-windup clamp
+    if (pi.integral > PI_INTEGRAL_LIMIT) pi.integral = PI_INTEGRAL_LIMIT;
+    if (pi.integral < -PI_INTEGRAL_LIMIT) pi.integral = -PI_INTEGRAL_LIMIT;
+
+    float output = PI_KP * error + PI_KI * pi.integral;
+
+    // Clamp output to [-1, 1]
+    if (output > 1.0f) output = 1.0f;
+    if (output < -1.0f) output = -1.0f;
+
+    return output;
+}
 
 void MotorControl::setup() {
     gpio_config_t enable_pin_config = {};
@@ -92,7 +161,9 @@ void MotorControl::setup() {
     configurePwmChannel(RIGHT_FORWARD_CHANNEL, RIGHT_FORWARD_PIN);
     configurePwmChannel(RIGHT_REVERSE_CHANNEL, RIGHT_REVERSE_PIN);
 
-    applyWheelOutputs(0.0f, 0.0f);
+    applyWheelDuties(0.0f, 0.0f);
+
+    setupEncoders();
 
     xTaskCreate(
         task,
@@ -110,41 +181,54 @@ void MotorControl::task(void *arg) {
     while (1) {
         xTaskDelayUntil(&xLastWakeTime, 10 / portTICK_RATE_MS);
 
+        // Always read encoders to keep position tracking up to date
+        self->readEncoders(CONTROL_PERIOD_S);
+
         const Command command = self->getCommand();
         if (!command.active) {
-            self->applyWheelOutputs(0.0f, 0.0f);
+            self->left_pi_.integral  = 0.0f;
+            self->right_pi_.integral = 0.0f;
+            self->applyWheelDuties(0.0f, 0.0f);
             continue;
         }
 
         const float half_track = TRACK_WIDTH_METERS * 0.5f;
-        float left_speed = command.linear_x - (command.angular_z * half_track);
-        float right_speed = command.linear_x + (command.angular_z * half_track);
+        float left_setpoint  = command.linear_x - (command.angular_z * half_track);
+        float right_setpoint = command.linear_x + (command.angular_z * half_track);
 
-        if (std::fabs(left_speed) < COMMAND_DEADBAND_MPS) {
-            left_speed = 0.0f;
+        if (std::fabs(left_setpoint) < COMMAND_DEADBAND_MPS) {
+            left_setpoint = 0.0f;
         }
-        if (std::fabs(right_speed) < COMMAND_DEADBAND_MPS) {
-            right_speed = 0.0f;
+        if (std::fabs(right_setpoint) < COMMAND_DEADBAND_MPS) {
+            right_setpoint = 0.0f;
         }
 
-        self->applyWheelOutputs(left_speed, right_speed);
+        // Remember direction for encoder sign inference
+        self->last_left_dir_  = left_setpoint;
+        self->last_right_dir_ = right_setpoint;
+
+        float left_duty  = self->piControl(left_setpoint,  self->left_wheel_.velocity_mps,  self->left_pi_);
+        float right_duty = self->piControl(right_setpoint, self->right_wheel_.velocity_mps, self->right_pi_);
+
+        self->applyWheelDuties(left_duty, right_duty);
     }
 }
 
-void MotorControl::applyWheelOutputs(float left_speed, float right_speed) {
-    left_speed = applyMotorPolarity(left_speed, LEFT_MOTOR_INVERTED);
-    right_speed = applyMotorPolarity(right_speed, RIGHT_MOTOR_INVERTED);
+void MotorControl::applyWheelDuties(float left_duty, float right_duty) {
+    // Apply motor polarity inversion
+    if (LEFT_MOTOR_INVERTED)  left_duty  = -left_duty;
+    if (RIGHT_MOTOR_INVERTED) right_duty = -right_duty;
 
-    const uint32_t left_duty = dutyForSpeed(left_speed);
-    const uint32_t right_duty = dutyForSpeed(right_speed);
+    uint32_t left_abs  = static_cast<uint32_t>(std::fmin(std::fabs(left_duty), 1.0f) * PWM_MAX_DUTY);
+    uint32_t right_abs = static_cast<uint32_t>(std::fmin(std::fabs(right_duty), 1.0f) * PWM_MAX_DUTY);
 
-    writeDuty(LEFT_FORWARD_CHANNEL, left_speed > 0.0f ? left_duty : 0U);
-    writeDuty(LEFT_REVERSE_CHANNEL, left_speed < 0.0f ? left_duty : 0U);
-    writeDuty(RIGHT_FORWARD_CHANNEL, right_speed > 0.0f ? right_duty : 0U);
-    writeDuty(RIGHT_REVERSE_CHANNEL, right_speed < 0.0f ? right_duty : 0U);
+    writeDuty(LEFT_FORWARD_CHANNEL,  left_duty > 0.0f  ? left_abs  : 0U);
+    writeDuty(LEFT_REVERSE_CHANNEL,  left_duty < 0.0f  ? left_abs  : 0U);
+    writeDuty(RIGHT_FORWARD_CHANNEL, right_duty > 0.0f ? right_abs : 0U);
+    writeDuty(RIGHT_REVERSE_CHANNEL, right_duty < 0.0f ? right_abs : 0U);
 
-    setEnablePin(LEFT_ENABLE_PIN, left_duty > 0U);
-    setEnablePin(RIGHT_ENABLE_PIN, right_duty > 0U);
+    setEnablePin(LEFT_ENABLE_PIN,  left_abs > 0U);
+    setEnablePin(RIGHT_ENABLE_PIN, right_abs > 0U);
 }
 
 void MotorControl::setCommand(float linear_x, float angular_z, uint32_t seq, uint32_t timeout_ms) {
@@ -160,14 +244,18 @@ void MotorControl::setCommand(float linear_x, float angular_z, uint32_t seq, uin
     timeout_ms_ = timeout_ms;
     last_update_ms_ = millis();
     active_ = true;
-    applyWheelOutputs(linear_x_, angular_z_);
+    // Actual duty is computed by PI loop in task()
 }
 
 void MotorControl::stop() {
     linear_x_ = 0.0f;
     angular_z_ = 0.0f;
     active_ = false;
-    applyWheelOutputs(0.0f, 0.0f);
+    left_pi_.integral  = 0.0f;
+    right_pi_.integral = 0.0f;
+    left_vel_avg_.reset();
+    right_vel_avg_.reset();
+    applyWheelDuties(0.0f, 0.0f);
 }
 
 bool MotorControl::expireIfTimedOut(uint32_t now_ms, uint32_t *expired_seq) {
