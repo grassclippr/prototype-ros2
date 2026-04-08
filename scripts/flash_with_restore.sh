@@ -4,21 +4,42 @@ set -euo pipefail
 PIO_PROJECT="${PIO_PROJECT:-rover/baseboard}"
 SERIAL_DEV="${SERIAL_DEV:-/dev/ttyACM0}"
 PROXY_PORT="${PROXY_PORT:-8888}"
-source "$(dirname "$0")/resolve_serial_dev.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/resolve_serial_dev.sh"
 SERIAL_DEV="$(resolve_serial_dev)"
 UPLOAD_PORT="${UPLOAD_PORT:-${SERIAL_DEV}}"
-COMPOSE_CMD="${COMPOSE_CMD:-podman-compose}"
+COMPOSE_CMD="${COMPOSE_CMD:-$("${SCRIPT_DIR}/resolve_compose_cmd.sh")}"
+read -r -a COMPOSE_WORDS <<< "${COMPOSE_CMD}"
+PLATFORMIO_CORE_DIR="${PLATFORMIO_CORE_DIR:-${PROJECT_ROOT}/.platformio}"
+export PLATFORMIO_CORE_DIR
 services="core serial_mux_proxy micro_ros_agent"
 restore=""
 host_proxy_pids=""
 
+compose() {
+  "${COMPOSE_WORDS[@]}" "$@"
+}
+
+mkdir -p "${PLATFORMIO_CORE_DIR}"
+
+case "$(uname -s)" in
+  Darwin)
+    case "${UPLOAD_PORT}" in
+      /dev/ttyACM0|/dev/ttyUSB0|"")
+        UPLOAD_PORT="${SERIAL_DEV}"
+        ;;
+    esac
+    ;;
+esac
+
 for svc in $services; do
-  if "$COMPOSE_CMD" ps -q "$svc" >/dev/null 2>&1; then
+  if compose ps -q "$svc" >/dev/null 2>&1; then
     restore="$restore $svc"
   fi
 done
 
-"$COMPOSE_CMD" stop $services >/dev/null 2>&1 || true
+compose stop $services >/dev/null 2>&1 || true
 
 if command -v lsof >/dev/null 2>&1; then
   host_proxy_pids="$(lsof -t "${SERIAL_DEV}" 2>/dev/null | tr '\n' ' ' || true)"
@@ -45,5 +66,5 @@ else
 fi
 
 if [ -n "$restore" ]; then
-  BAUDRATE="${BAUDRATE}" SERIAL_DEV="${SERIAL_DEV}" PROXY_PORT="${PROXY_PORT}" "$COMPOSE_CMD" up -d $restore
+  BAUDRATE="${BAUDRATE}" SERIAL_DEV="${SERIAL_DEV}" PROXY_PORT="${PROXY_PORT}" compose up -d $restore
 fi

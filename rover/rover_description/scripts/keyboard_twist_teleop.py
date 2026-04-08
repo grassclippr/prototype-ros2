@@ -10,10 +10,10 @@ from geometry_msgs.msg import Twist
 from rclpy.node import Node
 
 
-LINEAR_STEP = 0.02
-ANGULAR_STEP = 0.15
-MAX_LINEAR = 0.20
-MAX_ANGULAR = 0.80
+LINEAR_STEP = 0.01
+ANGULAR_STEP = 0.10
+MAX_LINEAR = 0.08
+MAX_ANGULAR = 0.40
 PUBLISH_PERIOD_SEC = 0.1
 
 
