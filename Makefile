@@ -1,4 +1,4 @@
-# Shared config lives in .env (also auto-loaded by docker-compose).
+# Shared config lives in .env (also auto-loaded by compose).
 -include .env
 export
 
@@ -6,15 +6,17 @@ PIO_PROJECT := rover/baseboard
 PIO_ENV := LynxAdapter_v1_0
 MICROROS_HEADER_MARKER := $(PIO_PROJECT)/.pio/libdeps/$(PIO_ENV)/micro_ros_platformio/libmicroros/include/nmea_msgs/msg/sentence.h
 
-SERIAL_DEV ?= /dev/ttyACM0
+SERIAL_DEV ?= $(shell ./scripts/resolve_serial_dev.sh)
 UPLOAD_PORT ?= $(SERIAL_DEV)
 PROXY_PORT ?= 8888
 BAUDRATE ?= 921600
+LINEAR_X ?= -0.2
+ANGULAR_Z ?= 0.0
 JOY_DEV ?= /dev/input/js0
 JOY_BACKEND ?= game_controller_node
 JOY_DEVICE_ID ?= 0
 JOY_DEVICE_NAME ?=
-COMPOSE ?= podman-compose
+COMPOSE ?= $(shell ./scripts/resolve_compose_cmd.sh)
 PODMAN_NETWORK ?= prototype-ros2_micro_ros_net
 PODMAN_PROXY_IMAGE ?= localhost/prototype-ros2_serial_mux_proxy:latest
 PODMAN_AGENT_IMAGE ?= docker.io/microros/micro-ros-agent:jazzy
@@ -183,8 +185,13 @@ e2e: flash
 	@SERIAL_DEV=$(SERIAL_DEV) BAUDRATE=$(BAUDRATE) PROXY_PORT=$(PROXY_PORT) ./scripts/manual_e2e.sh
 
 .PHONY: teleop
-teleop: flash
+teleop:
+	@if [ "$(FLASH)" != "0" ]; then $(MAKE) flash; fi
 	@SERIAL_DEV=$(SERIAL_DEV) BAUDRATE=$(BAUDRATE) PROXY_PORT=$(PROXY_PORT) ./scripts/manual_teleop.sh
+
+.PHONY: cmd-vel
+cmd-vel:
+	@LINEAR_X=$(LINEAR_X) ANGULAR_Z=$(ANGULAR_Z) ./scripts/send_cmd_vel.sh
 
 .PHONY: e2e-teleop
 e2e-teleop: teleop

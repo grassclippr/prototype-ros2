@@ -43,18 +43,19 @@ echo "🌐 ROS_DOMAIN_ID set to \"$ROS_DOMAIN_ID\""
 echo "📡 Sourcing ROS 2 environment: /opt/ros/$ROS_DISTRO/setup.bash"
 source /opt/ros/$ROS_DISTRO/setup.bash
 
-# Source workspace setup
+# Build the workspace on first boot so the install space exists for ros2 launch.
+if [ ! -f "$ROS_WS/install/setup.bash" ]; then
+  echo "🔨 Building ROS 2 workspace at $ROS_WS"
+  /root/workspace.sh
+fi
+
+# Source workspace setup now that it exists.
 echo "📦 Sourcing local workspace: $ROS_WS/install/setup.bash"
 source $ROS_WS/install/setup.bash
 
 # Source updated .bashrc
 echo "🔁 Reloading /root/.bashrc"
 source /root/.bashrc
-
-# Build ROS 2 workspace
-echo "🔨 Building ROS 2 workspace at $ROS_WS"
-cd $ROS_WS
-colcon build
 
 # Return to home
 cd

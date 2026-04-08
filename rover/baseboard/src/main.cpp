@@ -4,7 +4,7 @@
 
 #include "roles/roles.h"
 
-DeviceRole device_role = ROLE_UNKNOWN;
+DeviceRole device_role = ROLE_ROVER;
 Preferences nvs;
 
 CLI* cli = nullptr;
@@ -30,8 +30,15 @@ void setup() {
 #endif
 
     nvs.begin("core", false);
-    device_role = static_cast<DeviceRole>(nvs.getInt("role", static_cast<int>(ROLE_UNKNOWN)));
+    const int stored_role = nvs.getInt("role", static_cast<int>(ROLE_ROVER));
     nvs.end();
+
+    if (stored_role != static_cast<int>(ROLE_ROVER)) {
+        nvs.begin("core", false);
+        nvs.putInt("role", static_cast<int>(ROLE_ROVER));
+        nvs.end();
+    }
+    device_role = ROLE_ROVER;
 
     switch (device_role) {
           case ROLE_BASESTATION:
