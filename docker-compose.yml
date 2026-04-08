@@ -30,9 +30,11 @@ services:
     container_name: micro_ros_agent
     networks:
       - micro_ros_net
-    command: ["tcp4", "--port", "${PROXY_PORT:-8888}", "-v6"]
     ports:
       - "${PROXY_PORT:-8888}:${PROXY_PORT:-8888}"
+    command: ["tcp4", "--port", "${PROXY_PORT:-8888}", "-v4"]
+    depends_on:
+      - serial_mux_proxy
 
 networks:
   micro_ros_net:
