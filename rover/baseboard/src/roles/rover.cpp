@@ -15,8 +15,73 @@
 #endif
 
 constexpr uint32_t CMD_VEL_TIMEOUT_MS = 500;
+constexpr uint32_t GNSS_READ_TIMEOUT_MS = 200;
+constexpr size_t MAX_NMEA_SENTENCE_LEN = 82;
 
 static Rover *selfRover = nullptr;
+
+namespace {
+bool waitForSerialBytes(HardwareSerial &serial, size_t count, uint32_t timeout_ms) {
+    const unsigned long deadline = millis() + timeout_ms;
+    while (serial.available() < static_cast<int>(count)) {
+        if (millis() >= deadline) {
+            return false;
+        }
+        vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
+    return true;
+}
+
+void discardUntilNewline(HardwareSerial &serial, uint32_t timeout_ms) {
+    unsigned long deadline = millis() + timeout_ms;
+    while (millis() < deadline) {
+        while (serial.available()) {
+            int raw = serial.read();
+            if (raw < 0) {
+                continue;
+            }
+            if (static_cast<char>(raw) == '\n') {
+                return;
+            }
+            deadline = millis() + timeout_ms;
+        }
+        vTaskDelay(1 / portTICK_PERIOD_MS);
+    }
+}
+
+bool readNmeaLine(HardwareSerial &serial, String &line, uint32_t timeout_ms) {
+    line = "";
+    unsigned long deadline = millis() + timeout_ms;
+    while (true) {
+        while (!serial.available()) {
+            if (millis() >= deadline) {
+                if (line.length() > 0) {
+                    discardUntilNewline(serial, timeout_ms);
+                }
+                return false;
+            }
+            vTaskDelay(1 / portTICK_PERIOD_MS);
+        }
+
+        int raw = serial.read();
+        if (raw < 0) {
+            continue;
+        }
+
+        char ch = static_cast<char>(raw);
+        if (ch == '\n') {
+            return line.length() > 0;
+        }
+
+        line += ch;
+        deadline = millis() + timeout_ms;
+        if (line.length() > MAX_NMEA_SENTENCE_LEN) {
+            discardUntilNewline(serial, timeout_ms);
+            return false;
+        }
+    }
+}
+}  // namespace
 
 Rover::Rover() {
     selfRover = this;
@@ -343,14 +408,16 @@ void Rover::gnssReceiveTask(void *arg) {
             }
             case '$': {
                 // NMEA or proprietary message
-                String line = Serial2.readStringUntil('\n');
-                if (line.length() == 0) {
+                String line;
+                if (!readNmeaLine(Serial2, line, GNSS_READ_TIMEOUT_MS)) {
                     printf("Error reading NMEA line\n");
                     break;
                 }
 
-                if (line.length() <= 82 && self->uros_client.isConnected() && self->nmea_publisher_initialized) {
+                if (line.length() <= MAX_NMEA_SENTENCE_LEN && self->uros_client.isConnected() && self->nmea_publisher_initialized) {
+                    memset(selfRover->nmea_msg.sentence.data, 0, selfRover->nmea_msg.sentence.capacity);
                     memcpy(selfRover->nmea_msg.sentence.data, line.c_str(), line.length());
+                    selfRover->nmea_msg.sentence.data[line.length()] = '\0';
                     selfRover->nmea_msg.sentence.size = line.length();
 
                     RCSOFTCHECK(rcl_publish(&selfRover->nmea_publisher, &selfRover->nmea_msg, NULL));
