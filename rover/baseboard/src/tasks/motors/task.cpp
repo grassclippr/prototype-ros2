@@ -33,7 +33,8 @@ constexpr bool MOTOR_ENABLE_ACTIVE_HIGH = true;
 constexpr bool LEFT_MOTOR_INVERTED = true;
 constexpr bool RIGHT_MOTOR_INVERTED = false;
 
-constexpr float COMMAND_DEADBAND_MPS = 0.01f;
+constexpr float WHEEL_RADIUS_METERS = 0.127f;
+constexpr float COMMAND_DEADBAND_RADPS = 0.01f;
 
 // Encoder pins (single-channel, asymmetric — count rising edges only)
 constexpr gpio_num_t LEFT_ENCODER_PIN  = static_cast<gpio_num_t>(I2C_SDA_PIN);
@@ -194,16 +195,18 @@ void MotorControl::task(void *arg) {
             continue;
         }
 
-        const float half_track = TRACK_WIDTH_METERS * 0.5f;
-        float left_setpoint  = command.linear_x - (command.angular_z * half_track);
-        float right_setpoint = command.linear_x + (command.angular_z * half_track);
+        float left_wheel_angular_velocity = command.left_wheel_angular_velocity;
+        float right_wheel_angular_velocity = command.right_wheel_angular_velocity;
 
-        if (std::fabs(left_setpoint) < COMMAND_DEADBAND_MPS) {
-            left_setpoint = 0.0f;
+        if (std::fabs(left_wheel_angular_velocity) < COMMAND_DEADBAND_RADPS) {
+            left_wheel_angular_velocity = 0.0f;
         }
-        if (std::fabs(right_setpoint) < COMMAND_DEADBAND_MPS) {
-            right_setpoint = 0.0f;
+        if (std::fabs(right_wheel_angular_velocity) < COMMAND_DEADBAND_RADPS) {
+            right_wheel_angular_velocity = 0.0f;
         }
+
+        const float left_setpoint = left_wheel_angular_velocity * WHEEL_RADIUS_METERS;
+        const float right_setpoint = right_wheel_angular_velocity * WHEEL_RADIUS_METERS;
 
         // Remember direction for encoder sign inference
         self->last_left_dir_  = left_setpoint;
@@ -233,15 +236,19 @@ void MotorControl::applyWheelDuties(float left_duty, float right_duty) {
     setEnablePin(RIGHT_ENABLE_PIN, right_abs > 0U);
 }
 
-void MotorControl::setCommand(float linear_x, float angular_z, uint32_t seq, uint32_t timeout_ms) {
-    printf("motor command: linear_x=%.3f angular_z=%.3f seq=%lu timeout_ms=%lu\n",
-           static_cast<double>(linear_x),
-           static_cast<double>(angular_z),
+void MotorControl::setWheelCommand(
+    float left_wheel_angular_velocity,
+    float right_wheel_angular_velocity,
+    uint32_t seq,
+    uint32_t timeout_ms) {
+    printf("wheel command: left=%.3f rad/s right=%.3f rad/s seq=%lu timeout_ms=%lu\n",
+           static_cast<double>(left_wheel_angular_velocity),
+           static_cast<double>(right_wheel_angular_velocity),
            static_cast<unsigned long>(seq),
            static_cast<unsigned long>(timeout_ms));
 
-    linear_x_ = linear_x;
-    angular_z_ = angular_z;
+    left_wheel_angular_velocity_ = left_wheel_angular_velocity;
+    right_wheel_angular_velocity_ = right_wheel_angular_velocity;
     seq_ = seq;
     timeout_ms_ = timeout_ms;
     last_update_ms_ = millis();
@@ -250,8 +257,8 @@ void MotorControl::setCommand(float linear_x, float angular_z, uint32_t seq, uin
 }
 
 void MotorControl::stop() {
-    linear_x_ = 0.0f;
-    angular_z_ = 0.0f;
+    left_wheel_angular_velocity_ = 0.0f;
+    right_wheel_angular_velocity_ = 0.0f;
     active_ = false;
     left_pi_.integral  = 0.0f;
     right_pi_.integral = 0.0f;
@@ -278,8 +285,8 @@ bool MotorControl::expireIfTimedOut(uint32_t now_ms, uint32_t *expired_seq) {
 
 MotorControl::Command MotorControl::getCommand() const {
     Command command;
-    command.linear_x = linear_x_;
-    command.angular_z = angular_z_;
+    command.left_wheel_angular_velocity = left_wheel_angular_velocity_;
+    command.right_wheel_angular_velocity = right_wheel_angular_velocity_;
     command.seq = seq_;
     command.timeout_ms = timeout_ms_;
     command.last_update_ms = last_update_ms_;

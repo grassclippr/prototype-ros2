@@ -1,5 +1,7 @@
 <?xml version="1.0"?>
 <robot name="robomow_rl2000" xmlns:xacro="http://ros.org/wiki/xacro">
+  <xacro:arg name="hardware_plugin" default="mock_components/GenericSystem"/>
+  <xacro:arg name="wheel_command_topic" default="/wheel_cmd"/>
 
   <!-- PARAMETRAR -->
   <xacro:property name="length" value="0.9"/>
@@ -26,7 +28,8 @@
 
 <ros2_control name="RobomowSystem" type="system">
   <hardware>
-	  <plugin>mock_components/GenericSystem</plugin>
+	  <plugin>$(arg hardware_plugin)</plugin>
+    <param name="wheel_command_topic">$(arg wheel_command_topic)</param>
   </hardware>
   <joint name="left_wheel_motor_joint">
     <command_interface name="velocity"/>

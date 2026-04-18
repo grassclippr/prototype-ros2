@@ -14,9 +14,10 @@
 #define SERIAL_MUX_DISABLE_ROS 0
 #endif
 
-constexpr uint32_t CMD_VEL_TIMEOUT_MS = 500;
+constexpr uint32_t WHEEL_CMD_TIMEOUT_MS = 500;
 constexpr uint32_t GNSS_READ_TIMEOUT_MS = 200;
 constexpr size_t MAX_NMEA_SENTENCE_LEN = 82;
+constexpr size_t WHEEL_CMD_ELEMENT_COUNT = 2;
 
 static Rover *selfRover = nullptr;
 
@@ -81,6 +82,26 @@ bool readNmeaLine(HardwareSerial &serial, String &line, uint32_t timeout_ms) {
         }
     }
 }
+
+bool initWheelCommandMessage(std_msgs__msg__Float32MultiArray &msg) {
+    if (!std_msgs__msg__Float32MultiArray__init(&msg)) {
+        return false;
+    }
+
+    msg.layout.dim.data = nullptr;
+    msg.layout.dim.size = 0;
+    msg.layout.dim.capacity = 0;
+    msg.layout.data_offset = 0;
+    msg.data.data = static_cast<float *>(malloc(sizeof(float) * WHEEL_CMD_ELEMENT_COUNT));
+    if (msg.data.data == nullptr) {
+        std_msgs__msg__Float32MultiArray__fini(&msg);
+        return false;
+    }
+    memset(msg.data.data, 0, sizeof(float) * WHEEL_CMD_ELEMENT_COUNT);
+    msg.data.size = WHEEL_CMD_ELEMENT_COUNT;
+    msg.data.capacity = WHEEL_CMD_ELEMENT_COUNT;
+    return true;
+}
 }  // namespace
 
 Rover::Rover() {
@@ -138,8 +159,12 @@ Rover::Rover() {
         msg.data = 0;
         publisher = rcl_get_zero_initialized_publisher();
         nmea_publisher = rcl_get_zero_initialized_publisher();
-        cmd_vel_sub = rcl_get_zero_initialized_subscription();
-        geometry_msgs__msg__Twist__init(&cmd_vel_msg);
+        wheel_cmd_sub = rcl_get_zero_initialized_subscription();
+        if (!initWheelCommandMessage(wheel_cmd_msg)) {
+            printf("Failed to initialize wheel command message buffer\n");
+            return false;
+        }
+        wheel_cmd_msg_initialized = true;
 
         rcl_ret_t rc = rclc_publisher_init_default(
             &publisher,
@@ -173,22 +198,22 @@ Rover::Rover() {
             if (attempt > 1) {
                 delay(kSubRetryDelayMs);
                 rcl_reset_error();
-                cmd_vel_sub = rcl_get_zero_initialized_subscription();
+                wheel_cmd_sub = rcl_get_zero_initialized_subscription();
             }
             rc = rclc_subscription_init_default(
-                &cmd_vel_sub,
+                &wheel_cmd_sub,
                 node,
-                ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-                "/cmd_vel");
+                ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+                "/wheel_cmd");
             if (rc == RCL_RET_OK) {
                 break;
             }
-            log_rcl_error("cmd_vel subscription init", rc);
+            log_rcl_error("wheel_cmd subscription init", rc);
         }
         if (rc != RCL_RET_OK) {
             return false;
         }
-        cmd_vel_sub_initialized = true;
+        wheel_cmd_sub_initialized = true;
 
         const uint32_t timer_timeout = 1000;
         rc = rclc_timer_init_default2(
@@ -255,20 +280,26 @@ Rover::Rover() {
         RCCHECK(rclc_executor_add_timer(executor, &odom_vel_timer));
         RCCHECK(rclc_executor_add_subscription(
             executor,
-            &cmd_vel_sub,
-            &cmd_vel_msg,
+            &wheel_cmd_sub,
+            &wheel_cmd_msg,
             [](const void *msgin) -> void {
-                auto *twist = static_cast<const geometry_msgs__msg__Twist *>(msgin);
+                auto *wheel_cmd = static_cast<const std_msgs__msg__Float32MultiArray *>(msgin);
 
-                if (!std::isfinite(twist->linear.x) || !std::isfinite(twist->angular.z)) {
-                    printf("Rejected cmd_vel: non-finite velocity\n");
+                if (wheel_cmd->data.size < WHEEL_CMD_ELEMENT_COUNT) {
+                    printf("Rejected wheel_cmd: expected %u elements, got %u\n",
+                           static_cast<unsigned>(WHEEL_CMD_ELEMENT_COUNT),
+                           static_cast<unsigned>(wheel_cmd->data.size));
                     return;
                 }
 
-                selfRover->motors.setCommand(
-                    static_cast<float>(twist->linear.x),
-                    static_cast<float>(twist->angular.z),
-                    0, CMD_VEL_TIMEOUT_MS);
+                const float left = wheel_cmd->data.data[0];
+                const float right = wheel_cmd->data.data[1];
+                if (!std::isfinite(left) || !std::isfinite(right)) {
+                    printf("Rejected wheel_cmd: non-finite velocity\n");
+                    return;
+                }
+
+                selfRover->motors.setWheelCommand(left, right, 0, WHEEL_CMD_TIMEOUT_MS);
             },
             ON_NEW_DATA));
         return true;
@@ -289,9 +320,13 @@ Rover::Rover() {
             RCSOFTCHECK(rcl_publisher_fini(&nmea_publisher, node));
             nmea_publisher_initialized = false;
         }
-        if (cmd_vel_sub_initialized) {
-            RCSOFTCHECK(rcl_subscription_fini(&cmd_vel_sub, node));
-            cmd_vel_sub_initialized = false;
+        if (wheel_cmd_sub_initialized) {
+            RCSOFTCHECK(rcl_subscription_fini(&wheel_cmd_sub, node));
+            wheel_cmd_sub_initialized = false;
+        }
+        if (wheel_cmd_msg_initialized) {
+            std_msgs__msg__Float32MultiArray__fini(&wheel_cmd_msg);
+            wheel_cmd_msg_initialized = false;
         }
         if (odom_vel_timer_initialized) {
             RCSOFTCHECK(rcl_timer_fini(&odom_vel_timer));

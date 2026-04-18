@@ -45,8 +45,8 @@ struct MovingAverage {
 class MotorControl {
    public:
     struct Command {
-        float linear_x = 0.0f;
-        float angular_z = 0.0f;
+        float left_wheel_angular_velocity = 0.0f;
+        float right_wheel_angular_velocity = 0.0f;
         uint32_t seq = 0;
         uint32_t timeout_ms = 0;
         uint32_t last_update_ms = 0;
@@ -60,7 +60,11 @@ class MotorControl {
 
     void setup();
     static void task(void *arg);
-    void setCommand(float linear_x, float angular_z, uint32_t seq, uint32_t timeout_ms);
+    void setWheelCommand(
+        float left_wheel_angular_velocity,
+        float right_wheel_angular_velocity,
+        uint32_t seq,
+        uint32_t timeout_ms);
     void stop();
     bool expireIfTimedOut(uint32_t now_ms, uint32_t *expired_seq);
     Command getCommand() const;
@@ -79,8 +83,8 @@ class MotorControl {
     void applyWheelDuties(float left_duty, float right_duty);
 
     // Command state
-    volatile float linear_x_ = 0.0f;
-    volatile float angular_z_ = 0.0f;
+    volatile float left_wheel_angular_velocity_ = 0.0f;
+    volatile float right_wheel_angular_velocity_ = 0.0f;
     volatile uint32_t seq_ = 0;
     volatile uint32_t timeout_ms_ = 0;
     volatile uint32_t last_update_ms_ = 0;
