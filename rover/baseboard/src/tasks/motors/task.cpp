@@ -33,7 +33,9 @@ constexpr bool MOTOR_ENABLE_ACTIVE_HIGH = true;
 constexpr bool LEFT_MOTOR_INVERTED = true;
 constexpr bool RIGHT_MOTOR_INVERTED = false;
 
+// Keep the initial bring-up conservative.
 constexpr float WHEEL_RADIUS_METERS = 0.127f;
+constexpr float MAX_WHEEL_LINEAR_SPEED_MPS = 0.20f;
 constexpr float COMMAND_DEADBAND_RADPS = 0.01f;
 
 // Encoder pins (single-channel, asymmetric — count rising edges only)

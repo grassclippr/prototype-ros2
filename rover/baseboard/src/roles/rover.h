@@ -47,13 +47,6 @@ class Rover {
     bool odom_vel_publisher_initialized = false;
     bool odom_vel_timer_initialized = false;
 
-    // Wheel velocity publisher (measured from encoders)
-    rcl_timer_t odom_vel_timer = rcl_get_zero_initialized_timer();
-    rcl_publisher_t odom_vel_publisher = rcl_get_zero_initialized_publisher();
-    geometry_msgs__msg__Twist odom_vel_msg;
-    bool odom_vel_publisher_initialized = false;
-    bool odom_vel_timer_initialized = false;
-
     // ESP-NOW communication
     void onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t len);
 
