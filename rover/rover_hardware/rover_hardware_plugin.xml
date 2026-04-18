@@ -1,0 +1,8 @@
+<library path="rover_hardware">
+  <class
+    name="rover_hardware/RoverBaseboardSystem"
+    type="rover_hardware::RoverBaseboardSystem"
+    base_class_type="hardware_interface::SystemInterface">
+    <description>Wheel-command bridge from ros2_control to the rover baseboard.</description>
+  </class>
+</library>

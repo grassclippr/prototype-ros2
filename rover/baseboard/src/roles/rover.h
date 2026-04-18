@@ -1,8 +1,8 @@
 #pragma once
 #include <Arduino.h>
 #include <esp_now.h>
-#include <geometry_msgs/msg/twist.h>
 #include <nmea_msgs/msg/sentence.h>
+#include <std_msgs/msg/float32_multi_array.h>
 #include <std_msgs/msg/int32.h>
 
 #include "tasks/leds/task.h"
@@ -36,8 +36,8 @@ class Rover {
     rcl_publisher_t nmea_publisher = rcl_get_zero_initialized_publisher();
     nmea_msgs__msg__Sentence nmea_msg;
 
-    rcl_subscription_t cmd_vel_sub = rcl_get_zero_initialized_subscription();
-    geometry_msgs__msg__Twist cmd_vel_msg;
+    rcl_subscription_t wheel_cmd_sub = rcl_get_zero_initialized_subscription();
+    std_msgs__msg__Float32MultiArray wheel_cmd_msg;
 
     // Wheel velocity publisher (measured from encoders)
     rcl_timer_t odom_vel_timer = rcl_get_zero_initialized_timer();
@@ -55,6 +55,7 @@ class Rover {
     bool paired = false;
     bool baseboard_publisher_initialized = false;
     bool nmea_publisher_initialized = false;
-    bool cmd_vel_sub_initialized = false;
+    bool wheel_cmd_msg_initialized = false;
+    bool wheel_cmd_sub_initialized = false;
     bool timer_initialized = false;
 };
