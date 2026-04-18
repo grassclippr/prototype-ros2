@@ -334,14 +334,6 @@ Rover::Rover() {
         }
         if (odom_vel_publisher_initialized) {
             RCSOFTCHECK(rcl_publisher_fini(&odom_vel_publisher, node));
-            odom_vel_publisher_initialized = false;
-        }
-        if (odom_vel_timer_initialized) {
-            RCSOFTCHECK(rcl_timer_fini(&odom_vel_timer));
-            odom_vel_timer_initialized = false;
-        }
-        if (odom_vel_publisher_initialized) {
-            RCSOFTCHECK(rcl_publisher_fini(&odom_vel_publisher, node));
             geometry_msgs__msg__Twist__fini(&odom_vel_msg);
             odom_vel_publisher_initialized = false;
         }
