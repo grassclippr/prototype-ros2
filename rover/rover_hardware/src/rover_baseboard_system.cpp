@@ -34,7 +34,8 @@ hardware_interface::CallbackReturn RoverBaseboardSystem::on_init(
     wheel_commands_.assign(info_.joints.size(), 0.0);
 
     node_ = std::make_shared<rclcpp::Node>("rover_baseboard_system");
-    wheel_command_pub_ = node_->create_publisher<std_msgs::msg::Float32MultiArray>(kWheelCommandTopic, 10);
+    wheel_command_pub_ = node_->create_publisher<geometry_msgs::msg::Twist>(
+        kWheelCommandTopic, rclcpp::QoS(rclcpp::KeepLast(1)).best_effort());
 
     return hardware_interface::CallbackReturn::SUCCESS;
 }
@@ -105,10 +106,12 @@ void RoverBaseboardSystem::publishWheelCommand() {
         return;
     }
 
-    std_msgs::msg::Float32MultiArray msg;
-    msg.data.reserve(wheel_commands_.size());
-    for (const double command : wheel_commands_) {
-        msg.data.push_back(static_cast<float>(command));
+    geometry_msgs::msg::Twist msg;
+    if (!wheel_commands_.empty()) {
+        msg.linear.x = wheel_commands_[0];
+    }
+    if (wheel_commands_.size() > 1) {
+        msg.linear.y = wheel_commands_[1];
     }
     wheel_command_pub_->publish(msg);
 }

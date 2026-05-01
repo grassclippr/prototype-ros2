@@ -3,7 +3,6 @@
 #include <esp_now.h>
 #include <geometry_msgs/msg/twist.h>
 #include <nmea_msgs/msg/sentence.h>
-#include <std_msgs/msg/float32_multi_array.h>
 #include <std_msgs/msg/int32.h>
 
 #include "tasks/leds/task.h"
@@ -15,6 +14,8 @@ class Rover {
     Rover();
     void startPairing();
     void stopPairing();
+    bool isRosConnected() const;
+    void requestRosReconnect(const char *reason);
 
    private:
     // Tasks
@@ -38,7 +39,7 @@ class Rover {
     nmea_msgs__msg__Sentence nmea_msg;
 
     rcl_subscription_t wheel_cmd_sub = rcl_get_zero_initialized_subscription();
-    std_msgs__msg__Float32MultiArray wheel_cmd_msg;
+    geometry_msgs__msg__Twist wheel_cmd_msg;
 
     // Wheel velocity publisher (measured from encoders)
     rcl_timer_t odom_vel_timer = rcl_get_zero_initialized_timer();

@@ -169,6 +169,7 @@ def generate_launch_description():
             name='teleop_twist_joy_node',
             output='screen',
             parameters=[joystick_config],
+            remappings=[('cmd_vel', '/diff_drive_controller/cmd_vel')],
             condition=IfCondition(use_joystick)
         ),
 

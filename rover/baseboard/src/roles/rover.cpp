@@ -4,6 +4,8 @@
 
 #include <cmath>
 
+#include <rmw/qos_profiles.h>
+
 #include "./espnow.h"
 
 #ifndef SERIAL_MUX_HEARTBEAT
@@ -17,11 +19,13 @@
 constexpr uint32_t WHEEL_CMD_TIMEOUT_MS = 500;
 constexpr uint32_t GNSS_READ_TIMEOUT_MS = 200;
 constexpr size_t MAX_NMEA_SENTENCE_LEN = 82;
-constexpr size_t WHEEL_CMD_ELEMENT_COUNT = 2;
 
 static Rover *selfRover = nullptr;
 
 namespace {
+constexpr uint32_t BASEBOARD_HEARTBEAT_MS = 5000;
+constexpr uint8_t PUBLISH_FAILURES_BEFORE_RECONNECT = 2;
+
 bool waitForSerialBytes(HardwareSerial &serial, size_t count, uint32_t timeout_ms) {
     const unsigned long deadline = millis() + timeout_ms;
     while (serial.available() < static_cast<int>(count)) {
@@ -83,25 +87,39 @@ bool readNmeaLine(HardwareSerial &serial, String &line, uint32_t timeout_ms) {
     }
 }
 
-bool initWheelCommandMessage(std_msgs__msg__Float32MultiArray &msg) {
-    if (!std_msgs__msg__Float32MultiArray__init(&msg)) {
+bool publishWithReconnect(
+    rcl_publisher_t *publisher,
+    const void *ros_message,
+    const char *publisher_name,
+    uint8_t &consecutive_failures,
+    uint32_t &last_error_log_ms)
+{
+    if (!selfRover->isRosConnected()) {
+        consecutive_failures = 0;
         return false;
     }
 
-    msg.layout.dim.data = nullptr;
-    msg.layout.dim.size = 0;
-    msg.layout.dim.capacity = 0;
-    msg.layout.data_offset = 0;
-    msg.data.data = static_cast<float *>(malloc(sizeof(float) * WHEEL_CMD_ELEMENT_COUNT));
-    if (msg.data.data == nullptr) {
-        std_msgs__msg__Float32MultiArray__fini(&msg);
-        return false;
+    const rcl_ret_t rc = rcl_publish(publisher, ros_message, NULL);
+    if (rc == RCL_RET_OK) {
+        consecutive_failures = 0;
+        return true;
     }
-    memset(msg.data.data, 0, sizeof(float) * WHEEL_CMD_ELEMENT_COUNT);
-    msg.data.size = WHEEL_CMD_ELEMENT_COUNT;
-    msg.data.capacity = WHEEL_CMD_ELEMENT_COUNT;
-    return true;
+
+    consecutive_failures++;
+    const uint32_t now_ms = millis();
+    if (now_ms - last_error_log_ms >= 1000) {
+        printf("Failed to publish %s (rc=%d, failures=%u)\n",
+               publisher_name,
+               static_cast<int>(rc),
+               static_cast<unsigned>(consecutive_failures));
+        last_error_log_ms = now_ms;
+    }
+    if (consecutive_failures >= PUBLISH_FAILURES_BEFORE_RECONNECT) {
+        selfRover->requestRosReconnect(publisher_name);
+    }
+    return false;
 }
+
 }  // namespace
 
 Rover::Rover() {
@@ -160,7 +178,9 @@ Rover::Rover() {
         publisher = rcl_get_zero_initialized_publisher();
         nmea_publisher = rcl_get_zero_initialized_publisher();
         wheel_cmd_sub = rcl_get_zero_initialized_subscription();
-        if (!initWheelCommandMessage(wheel_cmd_msg)) {
+        // Use a fixed-size message type here so micro-ROS can deserialize wheel
+        // commands without dynamic allocation on the MCU.
+        if (!geometry_msgs__msg__Twist__init(&wheel_cmd_msg)) {
             printf("Failed to initialize wheel command message buffer\n");
             return false;
         }
@@ -193,6 +213,11 @@ Rover::Rover() {
         // session settle.
         constexpr int kMaxSubRetries = 3;
         constexpr int kSubRetryDelayMs = 500;
+        rmw_qos_profile_t wheel_cmd_qos = rmw_qos_profile_default;
+        wheel_cmd_qos.history = RMW_QOS_POLICY_HISTORY_KEEP_LAST;
+        wheel_cmd_qos.depth = 1;
+        wheel_cmd_qos.reliability = RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT;
+        wheel_cmd_qos.durability = RMW_QOS_POLICY_DURABILITY_VOLATILE;
         rc = RCL_RET_ERROR;
         for (int attempt = 1; attempt <= kMaxSubRetries; ++attempt) {
             if (attempt > 1) {
@@ -200,11 +225,12 @@ Rover::Rover() {
                 rcl_reset_error();
                 wheel_cmd_sub = rcl_get_zero_initialized_subscription();
             }
-            rc = rclc_subscription_init_default(
+            rc = rclc_subscription_init(
                 &wheel_cmd_sub,
                 node,
-                ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-                "/wheel_cmd");
+                ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
+                "/wheel_cmd",
+                &wheel_cmd_qos);
             if (rc == RCL_RET_OK) {
                 break;
             }
@@ -215,7 +241,7 @@ Rover::Rover() {
         }
         wheel_cmd_sub_initialized = true;
 
-        const uint32_t timer_timeout = 1000;
+        const uint32_t timer_timeout = BASEBOARD_HEARTBEAT_MS;
         rc = rclc_timer_init_default2(
             &timer,
             support,
@@ -223,8 +249,16 @@ Rover::Rover() {
             [](rcl_timer_t *timer, int64_t last_call_time) {
                 (void)timer;
                 (void)last_call_time;
-                RCSOFTCHECK(rcl_publish(&selfRover->publisher, &selfRover->msg, NULL));
-                selfRover->msg.data++;
+                static uint8_t consecutive_failures = 0;
+                static uint32_t last_error_log_ms = 0;
+                if (publishWithReconnect(
+                        &selfRover->publisher,
+                        &selfRover->msg,
+                        "baseboard publisher",
+                        consecutive_failures,
+                        last_error_log_ms)) {
+                    selfRover->msg.data++;
+                }
             },
             true);
         if (rc != RCL_RET_OK) {
@@ -264,7 +298,14 @@ Rover::Rover() {
                 selfRover->odom_vel_msg.linear.y = left.velocity_mps;   // per-wheel debug
                 selfRover->odom_vel_msg.linear.z = right.velocity_mps;  // per-wheel debug
 
-                RCSOFTCHECK(rcl_publish(&selfRover->odom_vel_publisher, &selfRover->odom_vel_msg, NULL));
+                static uint8_t consecutive_failures = 0;
+                static uint32_t last_error_log_ms = 0;
+                (void)publishWithReconnect(
+                    &selfRover->odom_vel_publisher,
+                    &selfRover->odom_vel_msg,
+                    "wheel velocity publisher",
+                    consecutive_failures,
+                    last_error_log_ms);
             },
             true);
         if (rc != RCL_RET_OK) {
@@ -283,17 +324,9 @@ Rover::Rover() {
             &wheel_cmd_sub,
             &wheel_cmd_msg,
             [](const void *msgin) -> void {
-                auto *wheel_cmd = static_cast<const std_msgs__msg__Float32MultiArray *>(msgin);
-
-                if (wheel_cmd->data.size < WHEEL_CMD_ELEMENT_COUNT) {
-                    printf("Rejected wheel_cmd: expected %u elements, got %u\n",
-                           static_cast<unsigned>(WHEEL_CMD_ELEMENT_COUNT),
-                           static_cast<unsigned>(wheel_cmd->data.size));
-                    return;
-                }
-
-                const float left = wheel_cmd->data.data[0];
-                const float right = wheel_cmd->data.data[1];
+                auto *wheel_cmd = static_cast<const geometry_msgs__msg__Twist *>(msgin);
+                const float left = wheel_cmd->linear.x;
+                const float right = wheel_cmd->linear.y;
                 if (!std::isfinite(left) || !std::isfinite(right)) {
                     printf("Rejected wheel_cmd: non-finite velocity\n");
                     return;
@@ -325,7 +358,7 @@ Rover::Rover() {
             wheel_cmd_sub_initialized = false;
         }
         if (wheel_cmd_msg_initialized) {
-            std_msgs__msg__Float32MultiArray__fini(&wheel_cmd_msg);
+            geometry_msgs__msg__Twist__fini(&wheel_cmd_msg);
             wheel_cmd_msg_initialized = false;
         }
         if (odom_vel_timer_initialized) {
@@ -377,6 +410,14 @@ Rover::Rover() {
         1,
         &commandWatchdogTaskHandle);
 };
+
+bool Rover::isRosConnected() const {
+    return uros_client.isConnected();
+}
+
+void Rover::requestRosReconnect(const char *reason) {
+    uros_client.requestReconnect(reason);
+}
 
 void Rover::gnssReceiveTask(void *arg) {
     Rover *self = (Rover *)arg;
