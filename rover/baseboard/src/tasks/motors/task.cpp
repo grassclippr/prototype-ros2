@@ -9,12 +9,16 @@
 #include "hardware.h"
 
 namespace {
-#ifndef ROVER_ENABLE_BUMPER_INTERLOCK
-#define ROVER_ENABLE_BUMPER_INTERLOCK 1
+#ifndef ROVER_ENABLE_SAFETY_INTERLOCK
+#define ROVER_ENABLE_SAFETY_INTERLOCK 1
 #endif
 
-#ifndef ROVER_ENFORCE_BUMPER_INTERLOCK
-#define ROVER_ENFORCE_BUMPER_INTERLOCK 1
+#ifndef ROVER_ENFORCE_SAFETY_INTERLOCK
+#define ROVER_ENFORCE_SAFETY_INTERLOCK 1
+#endif
+
+#ifndef ROVER_ENABLE_LIFT
+#define ROVER_ENABLE_LIFT 1
 #endif
 
 #ifndef ROVER_ENABLE_BUMPER_ONE_WIRE
@@ -22,7 +26,11 @@ namespace {
 #endif
 
 #ifndef ROVER_ENABLE_BUMPER_UART_FAULT
-#define ROVER_ENABLE_BUMPER_UART_FAULT 1
+#define ROVER_ENABLE_BUMPER_UART_FAULT 0
+#endif
+
+#ifndef LIFT_ACTIVE_LEVEL
+#define LIFT_ACTIVE_LEVEL 0
 #endif
 
 #ifndef BUMPER_ONE_WIRE_ACTIVE_LEVEL
@@ -61,7 +69,7 @@ constexpr bool RIGHT_MOTOR_INVERTED = false;
 constexpr float WHEEL_RADIUS_METERS = 0.127f;
 constexpr float MAX_WHEEL_LINEAR_SPEED_MPS = 0.20f;
 constexpr float COMMAND_DEADBAND_RADPS = 0.01f;
-constexpr uint32_t BUMPER_DEBOUNCE_MS = 30;
+constexpr uint32_t SAFETY_DEBOUNCE_MS = 30;
 
 // Encoder pins (single-channel, asymmetric — count rising edges only)
 constexpr gpio_num_t LEFT_ENCODER_PIN  = static_cast<gpio_num_t>(I2C_SDA_PIN);
@@ -178,44 +186,52 @@ void MotorControl::setup() {
     setEnablePin(LEFT_ENABLE_PIN, false);
     setEnablePin(RIGHT_ENABLE_PIN, false);
 
-#if ROVER_ENABLE_BUMPER_INTERLOCK
-    gpio_config_t bumper_pin_config = {};
-    bumper_pin_config.pin_bit_mask = 0;
+#if ROVER_ENABLE_SAFETY_INTERLOCK
+    gpio_config_t safety_pin_config = {};
+    safety_pin_config.pin_bit_mask = 0;
+#if ROVER_ENABLE_LIFT
+    safety_pin_config.pin_bit_mask |= (1ULL << LIFT_PIN);
+#endif
 #if ROVER_ENABLE_BUMPER_ONE_WIRE
-    bumper_pin_config.pin_bit_mask |= (1ULL << BUMPER_ONE_WIRE_PIN);
+    safety_pin_config.pin_bit_mask |= (1ULL << BUMPER_ONE_WIRE_PIN);
 #endif
 #if ROVER_ENABLE_BUMPER_UART_FAULT
-    bumper_pin_config.pin_bit_mask |= (1ULL << BUMPER_UART_FAULT_PIN);
+    safety_pin_config.pin_bit_mask |= (1ULL << BUMPER_UART_FAULT_PIN);
 #endif
-    bumper_pin_config.mode = GPIO_MODE_INPUT;
-    bumper_pin_config.pull_up_en = GPIO_PULLUP_ENABLE;
-    bumper_pin_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    bumper_pin_config.intr_type = GPIO_INTR_DISABLE;
-    if (bumper_pin_config.pin_bit_mask != 0) {
-        gpio_config(&bumper_pin_config);
+    safety_pin_config.mode = GPIO_MODE_INPUT;
+    safety_pin_config.pull_up_en = GPIO_PULLUP_ENABLE;
+    safety_pin_config.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    safety_pin_config.intr_type = GPIO_INTR_DISABLE;
+    if (safety_pin_config.pin_bit_mask != 0) {
+        gpio_config(&safety_pin_config);
     }
 
+    const int lift_level = gpio_get_level(LIFT_PIN);
     const int one_wire_level = gpio_get_level(BUMPER_ONE_WIRE_PIN);
     const int uart_fault_level = gpio_get_level(BUMPER_UART_FAULT_PIN);
-    bumper_triggered_ =
+    safety_triggered_ =
+        (ROVER_ENABLE_LIFT &&
+         lift_level == LIFT_ACTIVE_LEVEL) ||
         (ROVER_ENABLE_BUMPER_ONE_WIRE &&
          one_wire_level == BUMPER_ONE_WIRE_ACTIVE_LEVEL) ||
         (ROVER_ENABLE_BUMPER_UART_FAULT &&
          uart_fault_level == BUMPER_UART_FAULT_ACTIVE_LEVEL);
-    bumper_raw_triggered_ = bumper_triggered_;
-    bumper_raw_changed_ms_ = millis();
-#if ROVER_ENFORCE_BUMPER_INTERLOCK
-    constexpr const char *bumper_mode = "interlock";
+    safety_raw_triggered_ = safety_triggered_;
+    safety_raw_changed_ms_ = millis();
+#if ROVER_ENFORCE_SAFETY_INTERLOCK
+    constexpr const char *safety_mode = "interlock";
 #else
-    constexpr const char *bumper_mode = "monitor";
+    constexpr const char *safety_mode = "monitor";
 #endif
-    printf("Bumper %s enabled: one_wire_en=%d one_wire=%d uart_fault_en=%d uart_fault=%d triggered=%d\n",
-           bumper_mode,
+    printf("Safety %s enabled: lift_en=%d lift=%d one_wire_en=%d one_wire=%d uart_fault_en=%d uart_fault=%d triggered=%d\n",
+           safety_mode,
+           ROVER_ENABLE_LIFT,
+           lift_level,
            ROVER_ENABLE_BUMPER_ONE_WIRE,
            one_wire_level,
            ROVER_ENABLE_BUMPER_UART_FAULT,
            uart_fault_level,
-           bumper_triggered_ ? 1 : 0);
+           safety_triggered_ ? 1 : 0);
 #endif
 
     ledc_timer_config_t timer_config = {};
@@ -255,8 +271,8 @@ void MotorControl::task(void *arg) {
         self->readEncoders(CONTROL_PERIOD_S);
 
         const Command command = self->getCommand();
-#if ROVER_ENFORCE_BUMPER_INTERLOCK
-        if (self->bumperTriggered()) {
+#if ROVER_ENFORCE_SAFETY_INTERLOCK
+        if (self->safetyTriggered()) {
             if (command.active) {
                 self->stop();
             } else {
@@ -265,7 +281,7 @@ void MotorControl::task(void *arg) {
             continue;
         }
 #else
-        self->bumperTriggered();
+        self->safetyTriggered();
 #endif
 
         if (!command.active) {
@@ -316,40 +332,45 @@ void MotorControl::applyWheelDuties(float left_duty, float right_duty) {
     setEnablePin(RIGHT_ENABLE_PIN, right_abs > 0U);
 }
 
-bool MotorControl::bumperTriggered() {
-#if ROVER_ENABLE_BUMPER_INTERLOCK
+bool MotorControl::safetyTriggered() {
+#if ROVER_ENABLE_SAFETY_INTERLOCK
+    const int lift_level = gpio_get_level(LIFT_PIN);
     const int one_wire_level = gpio_get_level(BUMPER_ONE_WIRE_PIN);
     const int uart_fault_level = gpio_get_level(BUMPER_UART_FAULT_PIN);
     const bool raw_triggered =
+        (ROVER_ENABLE_LIFT &&
+         lift_level == LIFT_ACTIVE_LEVEL) ||
         (ROVER_ENABLE_BUMPER_ONE_WIRE &&
          one_wire_level == BUMPER_ONE_WIRE_ACTIVE_LEVEL) ||
         (ROVER_ENABLE_BUMPER_UART_FAULT &&
          uart_fault_level == BUMPER_UART_FAULT_ACTIVE_LEVEL);
     const uint32_t now_ms = millis();
 
-    if (raw_triggered != bumper_raw_triggered_) {
-        bumper_raw_triggered_ = raw_triggered;
-        bumper_raw_changed_ms_ = now_ms;
+    if (raw_triggered != safety_raw_triggered_) {
+        safety_raw_triggered_ = raw_triggered;
+        safety_raw_changed_ms_ = now_ms;
     }
 
-    if (raw_triggered != bumper_triggered_ &&
-        static_cast<uint32_t>(now_ms - bumper_raw_changed_ms_) >= BUMPER_DEBOUNCE_MS) {
-        bumper_triggered_ = raw_triggered;
-#if ROVER_ENFORCE_BUMPER_INTERLOCK
+    if (raw_triggered != safety_triggered_ &&
+        static_cast<uint32_t>(now_ms - safety_raw_changed_ms_) >= SAFETY_DEBOUNCE_MS) {
+        safety_triggered_ = raw_triggered;
+#if ROVER_ENFORCE_SAFETY_INTERLOCK
     constexpr const char *mode = "interlock";
 #else
     constexpr const char *mode = "monitor";
 #endif
-    printf("Bumper %s %s: one_wire_en=%d one_wire=%d uart_fault_en=%d uart_fault=%d\n",
+    printf("Safety %s %s: lift_en=%d lift=%d one_wire_en=%d one_wire=%d uart_fault_en=%d uart_fault=%d\n",
            mode,
-           bumper_triggered_ ? "triggered" : "released",
+           safety_triggered_ ? "triggered" : "released",
+           ROVER_ENABLE_LIFT,
+           lift_level,
            ROVER_ENABLE_BUMPER_ONE_WIRE,
            one_wire_level,
            ROVER_ENABLE_BUMPER_UART_FAULT,
            uart_fault_level);
     }
 
-    return bumper_triggered_;
+    return safety_triggered_;
 #else
     return false;
 #endif
@@ -360,13 +381,21 @@ void MotorControl::setWheelCommand(
     float right_wheel_angular_velocity,
     uint32_t seq,
     uint32_t timeout_ms) {
-#if ROVER_ENFORCE_BUMPER_INTERLOCK
-    if (bumperTriggered()) {
+    static uint32_t last_command_log_ms = 0;
+#if ROVER_ENFORCE_SAFETY_INTERLOCK
+    if (safetyTriggered()) {
+        const uint32_t now_ms = millis();
+        if (now_ms - last_command_log_ms >= 500) {
+            printf("Rejected wheel_cmd due to safety interlock: left=%.3f right=%.3f\n",
+                   left_wheel_angular_velocity,
+                   right_wheel_angular_velocity);
+            last_command_log_ms = now_ms;
+        }
         stop();
         return;
     }
 #else
-    bumperTriggered();
+    safetyTriggered();
 #endif
 
     left_wheel_angular_velocity_ = left_wheel_angular_velocity;
@@ -375,6 +404,14 @@ void MotorControl::setWheelCommand(
     timeout_ms_ = timeout_ms;
     last_update_ms_ = millis();
     active_ = true;
+    if ((std::fabs(left_wheel_angular_velocity) > COMMAND_DEADBAND_RADPS ||
+         std::fabs(right_wheel_angular_velocity) > COMMAND_DEADBAND_RADPS) &&
+        last_update_ms_ - last_command_log_ms >= 500) {
+        printf("Accepted wheel_cmd: left=%.3f right=%.3f\n",
+               left_wheel_angular_velocity,
+               right_wheel_angular_velocity);
+        last_command_log_ms = last_update_ms_;
+    }
     // Actual duty is computed by PI loop in task()
 }
 
