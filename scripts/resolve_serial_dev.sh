@@ -23,3 +23,5 @@ resolve_serial_dev() {
 
   printf '%s\n' "$serial_dev"
 }
+
+resolve_serial_dev
