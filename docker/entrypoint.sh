@@ -34,8 +34,13 @@ echo "🌐 ROS_DOMAIN_ID set to \"$ROS_DOMAIN_ID\""
 echo "📡 Sourcing ROS 2 environment: /opt/ros/$ROS_DISTRO/setup.bash"
 source /opt/ros/$ROS_DISTRO/setup.bash
 
-# Build the workspace on first boot so the install space exists for ros2 launch.
-if [ ! -f "$ROS_WS/install/setup.bash" ]; then
+# Build the mounted workspace before launching so bind-mounted source changes are
+# reflected in the install space after container recreation or host reboot.
+if [ "${ROS_AUTOBUILD:-1}" != "0" ]; then
+  echo "🔨 Building ROS 2 workspace at $ROS_WS"
+  cd "$ROS_WS"
+  colcon build
+elif [ ! -f "$ROS_WS/install/setup.bash" ]; then
   echo "🔨 Building ROS 2 workspace at $ROS_WS"
   /root/workspace.sh
 fi
