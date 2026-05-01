@@ -47,13 +47,6 @@ RUN apt-get update && \
     ros-${ROS_DISTRO}-rviz2 \
     ros-${ROS_DISTRO}-rqt-reconfigure
 
-# Install Mesa graphics drivers
-# Mesa is an open-source implementation of OpenGL and other graphics APIs
-# It's crucial for 3D rendering in many applications, including RViz in ROS
-RUN apt-get update && \
-    apt-get install -y software-properties-common && \
-    DEBIAN_FRONTEND=noninteractive add-apt-repository ppa:kisak/kisak-mesa
-
 # Create necessary directories
 RUN mkdir -p /etc/udev/rules.d && \
     mkdir -p /root/ros2_ws/src/rover
