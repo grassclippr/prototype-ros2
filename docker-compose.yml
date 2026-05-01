@@ -6,7 +6,7 @@ services:
     container_name: core
     networks:
       - micro_ros_net
-    command: ["ros2", "launch", "rover_description", "robot_control.launch.py"]
+    command: ["ros2", "launch", "rover_description", "robot_control.launch.py", "mode:=${ROVER_MODE:-sim}"]
     volumes:
       - ./rover:/root/ros2_ws/src/rover
       - /dev/input:/dev/input:ro

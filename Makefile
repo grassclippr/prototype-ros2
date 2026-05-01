@@ -16,6 +16,7 @@ JOY_DEV ?= /dev/input/js0
 JOY_BACKEND ?= game_controller_node
 JOY_DEVICE_ID ?= 0
 JOY_DEVICE_NAME ?=
+ROVER_MODE ?= sim
 COMPOSE ?= $(shell ./scripts/resolve_compose_cmd.sh)
 PODMAN_NETWORK ?= prototype-ros2_micro_ros_net
 PODMAN_PROXY_IMAGE ?= localhost/prototype-ros2_serial_mux_proxy:latest
@@ -114,6 +115,23 @@ $(CORE_CONTAINER_STAMP): $(CORE_IMAGE_INPUTS)
 		$(COMPOSE) up -d --build core; \
 	fi
 	@touch $@
+
+.PHONY: core-up
+core-up:
+	@$(COMPOSE) up -d --build core
+
+.PHONY: core-restart
+core-restart:
+	@$(COMPOSE) rm -sf core >/dev/null 2>&1 || true
+	@$(COMPOSE) up -d --build core
+
+.PHONY: core-sim
+core-sim:
+	@$(MAKE) core-restart ROVER_MODE=sim
+
+.PHONY: core-hw
+core-hw:
+	@$(MAKE) core-restart ROVER_MODE=hw
 
 .PHONY: podman-core-build
 podman-core-build: $(CORE_CONTAINER_STAMP)
