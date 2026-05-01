@@ -13,6 +13,7 @@ cd /root/ros2_ws
 # Install ROS2 dependencies for all packages
 echo "Installing ROS 2 dependencies..."
 apt-get update
+apt-get upgrade -y
 rosdep update
 rosdep install -i --from-path src --rosdistro $ROS_DISTRO -y
 
