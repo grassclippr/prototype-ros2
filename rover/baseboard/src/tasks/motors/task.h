@@ -81,6 +81,7 @@ class MotorControl {
     void readEncoders(float dt);
     float piControl(float setpoint, float measured, PiState &pi);
     void applyWheelDuties(float left_duty, float right_duty);
+    bool bumperTriggered();
 
     // Command state
     volatile float left_wheel_angular_velocity_ = 0.0f;
@@ -108,6 +109,9 @@ class MotorControl {
 
     PiState left_pi_;
     PiState right_pi_;
+    bool bumper_triggered_ = false;
+    bool bumper_raw_triggered_ = false;
+    uint32_t bumper_raw_changed_ms_ = 0;
 };
 
 #endif  // MOTOR_CONTROL_TASK_H
