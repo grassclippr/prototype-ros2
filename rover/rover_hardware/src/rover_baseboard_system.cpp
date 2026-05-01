@@ -11,6 +11,7 @@ namespace rover_hardware {
 namespace {
 
 constexpr size_t kExpectedJointCount = 2;
+constexpr char kWheelCommandTopic[] = "/wheel_cmd";
 
 }  // namespace
 
@@ -20,8 +21,6 @@ hardware_interface::CallbackReturn RoverBaseboardSystem::on_init(
         return hardware_interface::CallbackReturn::ERROR;
     }
 
-    const auto &info = params.hardware_info;
-
     if (info_.joints.size() != kExpectedJointCount) {
         RCLCPP_ERROR(rclcpp::get_logger("RoverBaseboardSystem"),
                      "Expected %zu joints, got %zu",
@@ -30,17 +29,12 @@ hardware_interface::CallbackReturn RoverBaseboardSystem::on_init(
         return hardware_interface::CallbackReturn::ERROR;
     }
 
-    const auto topic_it = info_.hardware_parameters.find("wheel_command_topic");
-    if (topic_it != info_.hardware_parameters.end() && !topic_it->second.empty()) {
-        wheel_command_topic_ = topic_it->second;
-    }
-
     wheel_positions_.assign(info_.joints.size(), 0.0);
     wheel_velocities_.assign(info_.joints.size(), 0.0);
     wheel_commands_.assign(info_.joints.size(), 0.0);
 
     node_ = std::make_shared<rclcpp::Node>("rover_baseboard_system");
-    wheel_command_pub_ = node_->create_publisher<std_msgs::msg::Float32MultiArray>(wheel_command_topic_, 10);
+    wheel_command_pub_ = node_->create_publisher<std_msgs::msg::Float32MultiArray>(kWheelCommandTopic, 10);
 
     return hardware_interface::CallbackReturn::SUCCESS;
 }

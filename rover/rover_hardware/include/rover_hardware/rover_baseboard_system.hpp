@@ -1,6 +1,5 @@
 #pragma once
 
-#include <string>
 #include <vector>
 
 #include <hardware_interface/system_interface.hpp>
@@ -28,7 +27,6 @@ class RoverBaseboardSystem : public hardware_interface::SystemInterface {
    private:
     void publishWheelCommand();
 
-    std::string wheel_command_topic_ = "/wheel_cmd";
     rclcpp::Node::SharedPtr node_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr wheel_command_pub_;
     std::vector<double> wheel_positions_;
