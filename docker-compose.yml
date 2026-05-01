@@ -1,40 +1,62 @@
 services:
   core:
+    image: localhost/prototype-ros2-core:latest
     build:
       context: .
       dockerfile: docker/Dockerfile
     container_name: core
     networks:
       - micro_ros_net
-    command: ["ros2", "launch", "rover_description", "robot_control.launch.py", "mode:=${ROVER_MODE:-sim}"]
+    privileged: true
+    group_add:
+      - keep-groups
+    command:
+      - ros2
+      - launch
+      - rover_description
+      - robot_control.launch.py
+      - mode:=${ROVER_MODE:-hw}
+      - use_joystick:=${USE_JOYSTICK:-true}
+      - joy_backend:=${JOY_BACKEND:-game_controller_node}
+      - joy_dev:=${JOY_DEV:-/dev/input/js0}
+      - joy_device_id:=${JOY_DEVICE_ID:-0}
+      - joy_device_name:=${JOY_DEVICE_NAME:-Pro Controller}
     volumes:
       - ./rover:/root/ros2_ws/src/rover
-      - /dev/input:/dev/input:ro
+      - /run/udev:/run/udev:ro
+    devices:
+      - /dev/input:/dev/input
+    depends_on:
+      - micro_ros_agent
 
   serial_mux_proxy:
+    image: localhost/prototype-ros2-serial-mux-proxy:latest
     build:
       context: .
       dockerfile: docker/Dockerfile.proxy
     container_name: serial_mux_proxy
     networks:
       - micro_ros_net
-    command: ["${SERIAL_DEV:-/dev/ttyACM0}", "${PROXY_PORT:-8888}", "${BAUDRATE:-115200}", "--agent-host", "${AGENT_HOST:-micro_ros_agent}"]
+    privileged: true
+    group_add:
+      - keep-groups
+    command: ["${SERIAL_DEV:-/dev/ttyACM0}", "${PROXY_PORT:-8888}", "${BAUDRATE:-921600}", "--agent-host", "${AGENT_HOST:-micro_ros_agent}"]
     volumes:
       - ./serial_mux_proxy.py:/app/serial_mux_proxy.py
       - ./serial_mux.py:/app/serial_mux.py
     devices:
       - ${SERIAL_DEV:-/dev/ttyACM0}:${SERIAL_DEV:-/dev/ttyACM0}
+    depends_on:
+      - micro_ros_agent
 
   micro_ros_agent:
-    image: microros/micro-ros-agent:jazzy
+    image: docker.io/microros/micro-ros-agent:jazzy
     container_name: micro_ros_agent
     networks:
       - micro_ros_net
     ports:
       - "${PROXY_PORT:-8888}:${PROXY_PORT:-8888}"
     command: ["tcp4", "--port", "${PROXY_PORT:-8888}", "-v4"]
-    depends_on:
-      - serial_mux_proxy
 
 networks:
   micro_ros_net:

@@ -1,0 +1,14 @@
+.git
+.embuild
+.platformio
+.pytest_cache
+__pycache__
+build
+install
+log
+grassclippr/.git
+grassclippr/.embuild
+grassclippr/target
+grassclippr/build
+rover/baseboard/.pio
+rover/rover_description/launch/__pycache__
