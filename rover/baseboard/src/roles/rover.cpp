@@ -16,6 +16,10 @@
 #define SERIAL_MUX_DISABLE_ROS 0
 #endif
 
+#ifndef ROVER_ENABLE_NMEA_PUBLISHER
+#define ROVER_ENABLE_NMEA_PUBLISHER 0
+#endif
+
 constexpr uint32_t WHEEL_CMD_TIMEOUT_MS = 500;
 constexpr uint32_t GNSS_READ_TIMEOUT_MS = 200;
 constexpr size_t MAX_NMEA_SENTENCE_LEN = 82;
@@ -197,6 +201,7 @@ Rover::Rover() {
         }
         baseboard_publisher_initialized = true;
 
+#if ROVER_ENABLE_NMEA_PUBLISHER
         rc = rclc_publisher_init_default(
             &nmea_publisher,
             node,
@@ -207,6 +212,7 @@ Rover::Rover() {
             return false;
         }
         nmea_publisher_initialized = true;
+#endif
 
         // Subscription creation can fail if the XRCE session isn't
         // fully ready yet.  Retry with a short delay to let the
@@ -349,10 +355,12 @@ Rover::Rover() {
             RCSOFTCHECK(rcl_publisher_fini(&publisher, node));
             baseboard_publisher_initialized = false;
         }
+#if ROVER_ENABLE_NMEA_PUBLISHER
         if (nmea_publisher_initialized) {
             RCSOFTCHECK(rcl_publisher_fini(&nmea_publisher, node));
             nmea_publisher_initialized = false;
         }
+#endif
         if (wheel_cmd_sub_initialized) {
             RCSOFTCHECK(rcl_subscription_fini(&wheel_cmd_sub, node));
             wheel_cmd_sub_initialized = false;
@@ -433,7 +441,19 @@ void Rover::gnssReceiveTask(void *arg) {
     self->sendNmeaCommand("QTMSAVEPAR"); // Save settings to non-volatile memory, so they persist after reboot
     delay(100);
 
+    if (!nmea_msgs__msg__Sentence__init(&self->nmea_msg)) {
+        printf("Failed to initialize NMEA sentence message\n");
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    free(self->nmea_msg.sentence.data);
     self->nmea_msg.sentence.data = (char *)malloc(82 + 1 * sizeof(char));
+    if (self->nmea_msg.sentence.data == nullptr) {
+        printf("Failed to allocate NMEA sentence buffer\n");
+        vTaskDelete(nullptr);
+        return;
+    }
     self->nmea_msg.sentence.size = 0;
     self->nmea_msg.sentence.capacity = 82 + 1;  // 82 is the maximum length of NMEA sentences, +1 for null terminator
 
@@ -491,6 +511,7 @@ void Rover::gnssReceiveTask(void *arg) {
                     break;
                 }
 
+#if ROVER_ENABLE_NMEA_PUBLISHER
                 if (line.length() <= MAX_NMEA_SENTENCE_LEN && self->uros_client.isConnected() && self->nmea_publisher_initialized) {
                     memset(selfRover->nmea_msg.sentence.data, 0, selfRover->nmea_msg.sentence.capacity);
                     memcpy(selfRover->nmea_msg.sentence.data, line.c_str(), line.length());
@@ -499,6 +520,7 @@ void Rover::gnssReceiveTask(void *arg) {
 
                     RCSOFTCHECK(rcl_publish(&selfRover->nmea_publisher, &selfRover->nmea_msg, NULL));
                 }
+#endif
                 break;
             }
             default:
