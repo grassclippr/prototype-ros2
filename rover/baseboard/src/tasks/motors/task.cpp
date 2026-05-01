@@ -212,7 +212,7 @@ void MotorControl::task(void *arg) {
         self->last_left_dir_  = left_setpoint;
         self->last_right_dir_ = right_setpoint;
 
-        float left_duty  = self->piControl(left_setpoint,  self->left_wheel_.velocity_mps,  self->left_pi_);
+        float left_duty  = self->piControl(left_setpoint, self->left_wheel_.velocity_mps, self->left_pi_);
         float right_duty = self->piControl(right_setpoint, self->right_wheel_.velocity_mps, self->right_pi_);
 
         self->applyWheelDuties(left_duty, right_duty);
