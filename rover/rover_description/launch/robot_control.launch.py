@@ -20,12 +20,6 @@ declare_mode_arg = DeclareLaunchArgument(
     description="Control backend mode: sim or hw"
 )
 mode = LaunchConfiguration("mode")
-declare_wheel_command_topic_arg = DeclareLaunchArgument(
-    name="wheel_command_topic",
-    default_value="/wheel_cmd",
-    description="Wheel command topic used by the hardware interface"
-)
-wheel_command_topic = LaunchConfiguration("wheel_command_topic")
 declare_use_joystick_arg = DeclareLaunchArgument(
     name="use_joystick",
     default_value="false",
@@ -76,10 +70,7 @@ robot_description_content = ParameterValue(
         xacro_file,
         " ",
         "hardware_plugin:=",
-        hardware_plugin,
-        " ",
-        "wheel_command_topic:=",
-        wheel_command_topic
+        hardware_plugin
     ]),
     value_type=str
 )
@@ -100,7 +91,6 @@ def generate_launch_description():
     return LaunchDescription([
         declare_log_level_arg,
         declare_mode_arg,
-        declare_wheel_command_topic_arg,
         declare_use_joystick_arg,
         declare_joy_backend_arg,
         declare_joy_dev_arg,
