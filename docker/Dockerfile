@@ -4,7 +4,7 @@ ARG ROS_DISTRO=jazzy
 # The base image comes from the official ROS repository hosted on Docker Hub
 # You can find available ROS images here: https://hub.docker.com/_/ros/tags
 # We're using the ros-base image which includes core ROS 2 packages
-FROM ros:${ROS_DISTRO}-ros-base
+FROM docker.io/library/ros:${ROS_DISTRO}-ros-base
 
 # Set the maintainer information for this Dockerfile
 LABEL maintainer="AutomaticAddison<automatic_addison@todo.com>"
