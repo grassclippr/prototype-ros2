@@ -38,6 +38,7 @@ RELEASE_ID='${RID}'
 CORE_IMAGE='${CORE_IMAGE}'
 PROXY_IMAGE='${PROXY_IMAGE}'
 AGENT_IMAGE='${AGENT_IMAGE}'
+IMU_I2C_DEV='${IMU_I2C_DEV}'
 SERIAL_DEV='${SERIAL_DEV}'
 PROXY_PORT='${PROXY_PORT}'
 BAUDRATE='${BAUDRATE}'
@@ -87,6 +88,10 @@ core_args=(
   -e ROS_AUTOBUILD=0
   -v /run/udev:/run/udev:ro
 )
+
+if [ -e "${IMU_I2C_DEV}" ]; then
+  core_args+=(--device "${IMU_I2C_DEV}:${IMU_I2C_DEV}")
+fi
 
 if [ -e /dev/input ]; then
   core_args+=(-v /dev/input:/dev/input)

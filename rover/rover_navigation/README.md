@@ -11,7 +11,27 @@ make core-hw
 make ros ARGS='launch rover_navigation localization.launch.py use_imu:=false'
 ```
 
-Use `use_imu:=true` once an IMU driver is publishing `sensor_msgs/Imu` on `/imu/data`.
+Use `use_imu:=true` once the ICM20948 is reachable on `/dev/i2c-1`. The localization launch now starts the IMU driver directly and publishes `sensor_msgs/Imu` on `/imu/data`.
+
+On the Pi, confirm the sensor is present first:
+
+```bash
+sudo modprobe i2c-dev
+sudo i2cdetect -y 1
+```
+
+The Adafruit ICM20948 breakout should appear at `0x69`.
+
+If you are starting the hardware stack locally with `make core-hw`, set `IMU_I2C_DEV=/dev/i2c-1` in `.env` on the Pi so compose passes the device through to the `core` container. The deploy scripts already default to that path.
+
+Then start localization with the IMU enabled:
+
+```bash
+make core-hw
+make ros ARGS='launch rover_navigation localization.launch.py use_imu:=true'
+```
+
+The initial integration pass uses gyro + accelerometer only. Magnetometer heading is intentionally deferred until the basic localization path is stable.
 
 ## Validation commands
 

@@ -23,6 +23,7 @@ services:
       - ./rover:/root/ros2_ws/src/rover
       - /run/udev:/run/udev:ro
     devices:
+      - ${IMU_I2C_DEV:-/dev/null}:${IMU_I2C_DEV:-/dev/null}
       - /dev/input:/dev/input
     depends_on:
       - micro_ros_agent

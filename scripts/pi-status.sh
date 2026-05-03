@@ -33,7 +33,7 @@ else
   fi
 fi
 
-ssh_pi "PI_APP_DIR='${PI_APP_DIR}' SERIAL_DEV='${SERIAL_DEV}' bash -s" <<'REMOTE'
+ssh_pi "PI_APP_DIR='${PI_APP_DIR}' SERIAL_DEV='${SERIAL_DEV}' IMU_I2C_DEV='${IMU_I2C_DEV}' bash -s" <<'REMOTE'
 set -euo pipefail
 export PATH="${HOME}/.local/bin:${PATH}"
 missing=0
@@ -76,6 +76,23 @@ if [ -e "$SERIAL_DEV" ]; then
   printf 'remote ok      serial %s\n' "$SERIAL_DEV"
 else
   printf 'remote missing serial %s\n' "$SERIAL_DEV"
+fi
+
+if [ -e "$IMU_I2C_DEV" ]; then
+  printf 'remote ok      imu i2c %s\n' "$IMU_I2C_DEV"
+else
+  printf 'remote missing imu i2c %s\n' "$IMU_I2C_DEV"
+  missing=1
+fi
+
+if command -v i2cdetect >/dev/null 2>&1 && [ -e "$IMU_I2C_DEV" ]; then
+  bus="${IMU_I2C_DEV#/dev/i2c-}"
+  if sudo -n i2cdetect -y "$bus" | grep -Eq '(^|[[:space:]])69([[:space:]]|$)'; then
+    printf 'remote ok      icm20948 address 0x69\n'
+  else
+    printf 'remote missing icm20948 address 0x69 on bus %s\n' "$bus"
+    missing=1
+  fi
 fi
 
 exit "$missing"

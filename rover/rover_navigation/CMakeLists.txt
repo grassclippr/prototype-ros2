@@ -10,6 +10,7 @@ install(
 
 install(PROGRAMS
   scripts/gnss_check.py
+  scripts/icm20948_node.py
   scripts/imu_check.py
   scripts/localization_check.py
   scripts/nav_stack_check.py

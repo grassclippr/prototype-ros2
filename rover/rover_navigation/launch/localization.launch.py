@@ -14,6 +14,16 @@ def generate_launch_description():
     use_gnss = LaunchConfiguration("use_gnss")
     publish_wheel_tf = LaunchConfiguration("publish_wheel_tf")
     publish_map_odom_identity = LaunchConfiguration("publish_map_odom_identity")
+    imu_i2c_bus = LaunchConfiguration("imu_i2c_bus")
+    imu_address = LaunchConfiguration("imu_address")
+    imu_frame_id = LaunchConfiguration("imu_frame_id")
+    imu_publish_rate = LaunchConfiguration("imu_publish_rate")
+    imu_x = LaunchConfiguration("imu_x")
+    imu_y = LaunchConfiguration("imu_y")
+    imu_z = LaunchConfiguration("imu_z")
+    imu_roll = LaunchConfiguration("imu_roll")
+    imu_pitch = LaunchConfiguration("imu_pitch")
+    imu_yaw = LaunchConfiguration("imu_yaw")
 
     wheel_ekf_config = PathJoinSubstitution([
         FindPackageShare(PACKAGE_NAME),
@@ -52,6 +62,32 @@ def generate_launch_description():
             default_value="true",
             description="Publish identity map->odom for early local-goal Nav2 bring-up.",
         ),
+        DeclareLaunchArgument(
+            "imu_i2c_bus",
+            default_value="1",
+            description="Linux I2C bus number for the ICM20948.",
+        ),
+        DeclareLaunchArgument(
+            "imu_address",
+            default_value="0x69",
+            description="I2C address for the ICM20948.",
+        ),
+        DeclareLaunchArgument(
+            "imu_frame_id",
+            default_value="imu_link",
+            description="Frame id for published IMU messages.",
+        ),
+        DeclareLaunchArgument(
+            "imu_publish_rate",
+            default_value="100.0",
+            description="Publish rate in Hz for the ICM20948 driver.",
+        ),
+        DeclareLaunchArgument("imu_x", default_value="0.0"),
+        DeclareLaunchArgument("imu_y", default_value="0.0"),
+        DeclareLaunchArgument("imu_z", default_value="0.0"),
+        DeclareLaunchArgument("imu_roll", default_value="0.0"),
+        DeclareLaunchArgument("imu_pitch", default_value="0.0"),
+        DeclareLaunchArgument("imu_yaw", default_value="0.0"),
 
         Node(
             package="tf2_ros",
@@ -70,10 +106,24 @@ def generate_launch_description():
             executable="static_transform_publisher",
             name="base_to_imu_static_tf",
             arguments=[
-                "--x", "0", "--y", "0", "--z", "0",
-                "--roll", "0", "--pitch", "0", "--yaw", "0",
-                "--frame-id", "base_link", "--child-frame-id", "imu_link",
+                "--x", imu_x, "--y", imu_y, "--z", imu_z,
+                "--roll", imu_roll, "--pitch", imu_pitch, "--yaw", imu_yaw,
+                "--frame-id", "base_link", "--child-frame-id", imu_frame_id,
             ],
+            condition=IfCondition(use_imu),
+        ),
+
+        Node(
+            package=PACKAGE_NAME,
+            executable="icm20948_node.py",
+            name="icm20948",
+            output="screen",
+            parameters=[{
+                "i2c_bus": imu_i2c_bus,
+                "address": imu_address,
+                "frame_id": imu_frame_id,
+                "publish_rate_hz": imu_publish_rate,
+            }],
             condition=IfCondition(use_imu),
         ),
 

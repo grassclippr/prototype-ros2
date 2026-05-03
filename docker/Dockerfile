@@ -22,13 +22,18 @@ SHELL ["/bin/bash", "-c"]
 RUN apt-get update -q && \
     apt-get upgrade -yq && \
     apt-get install -yq --no-install-recommends apt-utils wget curl git build-essential \
-    vim sudo lsb-release locales bash-completion tzdata gosu gedit htop nano libserial-dev
+    vim sudo lsb-release locales bash-completion tzdata gosu gedit htop nano libserial-dev i2c-tools libgpiod2
 
 # Install additional tools required for ROS 2 development
 # These packages help with building and managing ROS 2 workspaces
 RUN apt-get update -q && \
     apt-get install -y gnupg2 iputils-ping usbutils \
     python3-argcomplete python3-colcon-common-extensions python3-networkx python3-pip python3-rosdep python3-vcstool
+
+RUN python3 -m pip install --no-cache-dir \
+    adafruit-blinka \
+    adafruit-circuitpython-icm20x \
+    adafruit-extended-bus
 
 # Set up the ROS 2 environment
 # This ensures that ROS 2 commands are available in the shell
