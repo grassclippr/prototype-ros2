@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 require_cmd podman
 require_cmd rsync
 require_cmd ssh
+require_cmd zstd
 
 RID="$(release_id)"
 ARTIFACT_DIR="${PROJECT_ROOT}/.deploy/${RID}/runtime"
@@ -31,6 +32,16 @@ if [ "${INCLUDE_AGENT_IMAGE}" = "1" ]; then
   echo "Pulling and saving ${AGENT_IMAGE} for ${TARGET_PLATFORM}"
   podman pull --platform "${TARGET_PLATFORM}" "${AGENT_IMAGE}"
   podman save -o "${ARTIFACT_DIR}/micro-ros-agent-image.tar" "${AGENT_IMAGE}"
+fi
+
+echo "Compressing runtime images with zstd"
+zstd ${ZSTD_FLAGS} -"${ZSTD_LEVEL}" -f "${ARTIFACT_DIR}/core-image.tar" -o "${ARTIFACT_DIR}/core-image.tar.zst"
+rm -f "${ARTIFACT_DIR}/core-image.tar"
+zstd ${ZSTD_FLAGS} -"${ZSTD_LEVEL}" -f "${ARTIFACT_DIR}/serial-mux-proxy-image.tar" -o "${ARTIFACT_DIR}/serial-mux-proxy-image.tar.zst"
+rm -f "${ARTIFACT_DIR}/serial-mux-proxy-image.tar"
+if [ -f "${ARTIFACT_DIR}/micro-ros-agent-image.tar" ]; then
+  zstd ${ZSTD_FLAGS} -"${ZSTD_LEVEL}" -f "${ARTIFACT_DIR}/micro-ros-agent-image.tar" -o "${ARTIFACT_DIR}/micro-ros-agent-image.tar.zst"
+  rm -f "${ARTIFACT_DIR}/micro-ros-agent-image.tar"
 fi
 
 cat > "${ARTIFACT_DIR}/manifest.env" <<EOF
@@ -118,10 +129,22 @@ RELEASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${RELEASE_DIR}/../.." && pwd)"
 IMAGE_CACHE_DIR="${APP_DIR}/image-cache"
 
-podman load -i "${IMAGE_CACHE_DIR}/core-image.tar"
-podman load -i "${IMAGE_CACHE_DIR}/serial-mux-proxy-image.tar"
-if [ -f "${IMAGE_CACHE_DIR}/micro-ros-agent-image.tar" ]; then
-  podman load -i "${IMAGE_CACHE_DIR}/micro-ros-agent-image.tar"
+load_image() {
+  local stem="$1"
+  if [ -f "${IMAGE_CACHE_DIR}/${stem}.tar.zst" ]; then
+    zstd -dc "${IMAGE_CACHE_DIR}/${stem}.tar.zst" | podman load
+  elif [ -f "${IMAGE_CACHE_DIR}/${stem}.tar" ]; then
+    podman load -i "${IMAGE_CACHE_DIR}/${stem}.tar"
+  else
+    echo "error: missing image artifact for ${stem}" >&2
+    exit 1
+  fi
+}
+
+load_image core-image
+load_image serial-mux-proxy-image
+if [ -f "${IMAGE_CACHE_DIR}/micro-ros-agent-image.tar.zst" ] || [ -f "${IMAGE_CACHE_DIR}/micro-ros-agent-image.tar" ]; then
+  load_image micro-ros-agent-image
 fi
 
 if [ -L "${APP_DIR}/current" ]; then
@@ -140,9 +163,9 @@ REMOTE_RELEASE_DIR="${PI_APP_DIR}/releases/${RID}"
 REMOTE_IMAGE_CACHE_DIR="${PI_APP_DIR}/image-cache"
 ssh_pi "mkdir -p '${REMOTE_RELEASE_DIR}' '${REMOTE_IMAGE_CACHE_DIR}'"
 rsync_pi "${ARTIFACT_DIR}/manifest.env" "${ARTIFACT_DIR}/remote-start.sh" "${ARTIFACT_DIR}/remote-activate.sh" "${PI_SSH}:${REMOTE_RELEASE_DIR}/"
-rsync_pi "${ARTIFACT_DIR}/core-image.tar" "${ARTIFACT_DIR}/serial-mux-proxy-image.tar" "${PI_SSH}:${REMOTE_IMAGE_CACHE_DIR}/"
-if [ -f "${ARTIFACT_DIR}/micro-ros-agent-image.tar" ]; then
-  rsync_pi "${ARTIFACT_DIR}/micro-ros-agent-image.tar" "${PI_SSH}:${REMOTE_IMAGE_CACHE_DIR}/"
+rsync_pi "${ARTIFACT_DIR}/core-image.tar.zst" "${ARTIFACT_DIR}/serial-mux-proxy-image.tar.zst" "${PI_SSH}:${REMOTE_IMAGE_CACHE_DIR}/"
+if [ -f "${ARTIFACT_DIR}/micro-ros-agent-image.tar.zst" ]; then
+  rsync_pi "${ARTIFACT_DIR}/micro-ros-agent-image.tar.zst" "${PI_SSH}:${REMOTE_IMAGE_CACHE_DIR}/"
 fi
 ssh_pi "'${REMOTE_RELEASE_DIR}/remote-activate.sh'"
 

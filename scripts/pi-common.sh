@@ -34,6 +34,9 @@ CORE_IMAGE_REPO="${CORE_IMAGE_REPO:-localhost/prototype-ros2-core}"
 PROXY_IMAGE_REPO="${PROXY_IMAGE_REPO:-localhost/prototype-ros2-serial-mux-proxy}"
 AGENT_IMAGE="${AGENT_IMAGE:-docker.io/microros/micro-ros-agent:jazzy}"
 INCLUDE_AGENT_IMAGE="${INCLUDE_AGENT_IMAGE:-1}"
+RSYNC_FLAGS="${RSYNC_FLAGS:--az --partial --partial-dir=.rsync-partial --delete}"
+ZSTD_LEVEL="${ZSTD_LEVEL:-19}"
+ZSTD_FLAGS="${ZSTD_FLAGS:---rsyncable -T0}"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -59,5 +62,8 @@ ssh_pi() {
 }
 
 rsync_pi() {
-  rsync -az --delete "$@"
+  # Keep interrupted OTA transfers resumable without penalizing version-to-version
+  # deltas across rsyncable compressed image archives.
+  # shellcheck disable=SC2086
+  rsync ${RSYNC_FLAGS} "$@"
 }

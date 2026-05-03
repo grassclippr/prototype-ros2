@@ -21,9 +21,9 @@ rm -rf "${DEST_DIR}"
 mkdir -p "${DEST_DIR}/release" "${DEST_DIR}/image-cache"
 
 cp "${SOURCE_DIR}/manifest.env" "${SOURCE_DIR}/remote-start.sh" "${DEST_DIR}/release/"
-cp "${SOURCE_DIR}/core-image.tar" "${SOURCE_DIR}/serial-mux-proxy-image.tar" "${DEST_DIR}/image-cache/"
-if [ -f "${SOURCE_DIR}/micro-ros-agent-image.tar" ]; then
-  cp "${SOURCE_DIR}/micro-ros-agent-image.tar" "${DEST_DIR}/image-cache/"
+cp "${SOURCE_DIR}/core-image.tar.zst" "${SOURCE_DIR}/serial-mux-proxy-image.tar.zst" "${DEST_DIR}/image-cache/"
+if [ -f "${SOURCE_DIR}/micro-ros-agent-image.tar.zst" ]; then
+  cp "${SOURCE_DIR}/micro-ros-agent-image.tar.zst" "${DEST_DIR}/image-cache/"
 fi
 
 cat > "${DEST_DIR}/release/remote-activate.sh" <<'EOF'
@@ -34,10 +34,22 @@ RELEASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${RELEASE_DIR}/../.." && pwd)"
 IMAGE_CACHE_DIR="${APP_DIR}/image-cache"
 
-podman load -i "${IMAGE_CACHE_DIR}/core-image.tar"
-podman load -i "${IMAGE_CACHE_DIR}/serial-mux-proxy-image.tar"
-if [ -f "${IMAGE_CACHE_DIR}/micro-ros-agent-image.tar" ]; then
-  podman load -i "${IMAGE_CACHE_DIR}/micro-ros-agent-image.tar"
+load_image() {
+  local stem="$1"
+  if [ -f "${IMAGE_CACHE_DIR}/${stem}.tar.zst" ]; then
+    zstd -dc "${IMAGE_CACHE_DIR}/${stem}.tar.zst" | podman load
+  elif [ -f "${IMAGE_CACHE_DIR}/${stem}.tar" ]; then
+    podman load -i "${IMAGE_CACHE_DIR}/${stem}.tar"
+  else
+    echo "error: missing image artifact for ${stem}" >&2
+    exit 1
+  fi
+}
+
+load_image core-image
+load_image serial-mux-proxy-image
+if [ -f "${IMAGE_CACHE_DIR}/micro-ros-agent-image.tar.zst" ] || [ -f "${IMAGE_CACHE_DIR}/micro-ros-agent-image.tar" ]; then
+  load_image micro-ros-agent-image
 fi
 
 if [ -L "${APP_DIR}/current" ]; then
