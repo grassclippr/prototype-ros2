@@ -10,11 +10,14 @@ source /opt/ros/$ROS_DISTRO/setup.bash
 # Navigate back to the workspace root
 cd /root/ros2_ws
 
-# Install ROS2 dependencies for all packages
-echo "Installing ROS 2 dependencies..."
-apt-get update
-rosdep update
-rosdep install -i --from-path src --rosdistro $ROS_DISTRO -y
+if [ "${ROS_SKIP_DEP_INSTALL:-0}" != "1" ]; then
+    echo "Installing ROS 2 dependencies..."
+    apt-get update
+    if [ "${ROS_SKIP_ROSDEP_UPDATE:-0}" != "1" ]; then
+        rosdep update
+    fi
+    rosdep install -i --from-path src --rosdistro $ROS_DISTRO -y
+fi
 
 # Build the packages
 echo "Building packages..."

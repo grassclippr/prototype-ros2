@@ -3,6 +3,10 @@
 .platformio
 .pytest_cache
 __pycache__
+.deploy
+.hypothesis
+.venv
+venv
 build
 install
 log
@@ -12,3 +16,7 @@ grassclippr/target
 grassclippr/build
 rover/baseboard/.pio
 rover/rover_description/launch/__pycache__
+*.img
+*.img.xz
+*.jpg
+*.jpeg
