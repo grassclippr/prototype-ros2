@@ -4,6 +4,7 @@ import math
 
 import rclpy
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from sensor_msgs.msg import Imu
 
 from adafruit_extended_bus import ExtendedI2C
@@ -15,7 +16,7 @@ class Icm20948Node(Node):
         super().__init__("icm20948")
 
         self.declare_parameter("i2c_bus", 1)
-        self.declare_parameter("address", "0x69")
+        self.declare_parameter("address", 0x69)
         self.declare_parameter("frame_id", "imu_link")
         self.declare_parameter("topic", "/imu/data")
         self.declare_parameter("publish_rate_hz", 100.0)
@@ -23,7 +24,13 @@ class Icm20948Node(Node):
         self.declare_parameter("linear_acceleration_variance", 0.04)
 
         i2c_bus = self.get_parameter("i2c_bus").get_parameter_value().integer_value
-        address = int(self.get_parameter("address").value, 0)
+        address_param = self.get_parameter("address")
+        if address_param.type_ == Parameter.Type.STRING:
+            address = int(address_param.value, 0)
+        elif address_param.type_ == Parameter.Type.INTEGER:
+            address = int(address_param.value)
+        else:
+            raise ValueError("address must be an integer or string literal like 0x69")
         self.frame_id = self.get_parameter("frame_id").value
         topic = self.get_parameter("topic").value
         publish_rate_hz = float(self.get_parameter("publish_rate_hz").value)
