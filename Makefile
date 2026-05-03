@@ -17,6 +17,11 @@ JOY_BACKEND ?= game_controller_node
 JOY_DEVICE_ID ?= 0
 JOY_DEVICE_NAME ?=
 ROVER_MODE ?= sim
+USE_IMU ?= false
+USE_GNSS ?= false
+X ?= 0.5
+Y ?= 0.0
+YAW ?= 0.0
 COMPOSE ?= $(shell ./scripts/resolve_compose_cmd.sh)
 PODMAN_NETWORK ?= prototype-ros2_micro_ros_net
 PODMAN_PROXY_IMAGE ?= localhost/prototype-ros2_serial_mux_proxy:latest
@@ -210,6 +215,38 @@ teleop:
 .PHONY: cmd-vel
 cmd-vel:
 	@LINEAR_X=$(LINEAR_X) ANGULAR_Z=$(ANGULAR_Z) ./scripts/send_cmd_vel.sh
+
+.PHONY: nav-localization
+nav-localization:
+	@$(MAKE) ros ARGS='launch rover_navigation localization.launch.py use_imu:=$(USE_IMU) use_gnss:=$(USE_GNSS)'
+
+.PHONY: nav-bringup
+nav-bringup:
+	@$(MAKE) ros ARGS='launch rover_navigation bringup.launch.py use_imu:=$(USE_IMU) use_gnss:=$(USE_GNSS) start_nav2:=true'
+
+.PHONY: nav-check-imu
+nav-check-imu:
+	@$(MAKE) ros ARGS='run rover_navigation imu_check.py'
+
+.PHONY: nav-check-gnss
+nav-check-gnss:
+	@$(MAKE) ros ARGS='run rover_navigation gnss_check.py'
+
+.PHONY: nav-check-localization
+nav-check-localization:
+	@$(MAKE) ros ARGS='run rover_navigation localization_check.py'
+
+.PHONY: nav-check-stack
+nav-check-stack:
+	@$(MAKE) ros ARGS='run rover_navigation nav_stack_check.py'
+
+.PHONY: nav-check-odom
+nav-check-odom:
+	@$(MAKE) ros ARGS='run rover_navigation odom_calibration_check.py'
+
+.PHONY: nav-send-goal
+nav-send-goal:
+	@$(MAKE) ros ARGS='run rover_navigation send_nav_goal.py $(X) $(Y) $(YAW)'
 
 .PHONY: e2e-teleop
 e2e-teleop: teleop
