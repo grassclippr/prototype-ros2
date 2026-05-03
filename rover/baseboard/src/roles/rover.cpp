@@ -276,23 +276,27 @@ Rover::Rover() {
         // Wheel velocity publisher (measured from encoders)
         odom_vel_publisher = rcl_get_zero_initialized_publisher();
         geometry_msgs__msg__Twist__init(&odom_vel_msg);
-        rc = rclc_publisher_init_default(
+        rmw_qos_profile_t wheel_feedback_qos = rmw_qos_profile_sensor_data;
+        wheel_feedback_qos.history = RMW_QOS_POLICY_HISTORY_KEEP_LAST;
+        wheel_feedback_qos.depth = 1;
+        rc = rclc_publisher_init(
             &odom_vel_publisher,
             node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-            "/wheel_velocities");
+            "/wheel_velocities",
+            &wheel_feedback_qos);
         if (rc != RCL_RET_OK) {
             log_rcl_error("odom_vel publisher init", rc);
             return false;
         }
         odom_vel_publisher_initialized = true;
 
-        // 20 Hz timer to publish encoder feedback
+        // 10 Hz timer to publish encoder feedback
         odom_vel_timer = rcl_get_zero_initialized_timer();
         rc = rclc_timer_init_default2(
             &odom_vel_timer,
             support,
-            RCL_MS_TO_NS(50),  // 50ms = 20Hz
+            RCL_MS_TO_NS(100),  // 100ms = 10Hz
             [](rcl_timer_t *timer, int64_t last_call_time) {
                 (void)timer;
                 (void)last_call_time;
@@ -303,6 +307,8 @@ Rover::Rover() {
                 selfRover->odom_vel_msg.angular.z = (right.velocity_mps - left.velocity_mps) / TRACK_WIDTH_METERS;
                 selfRover->odom_vel_msg.linear.y = left.velocity_mps;   // per-wheel debug
                 selfRover->odom_vel_msg.linear.z = right.velocity_mps;  // per-wheel debug
+                selfRover->odom_vel_msg.angular.x = 0.0f;
+                selfRover->odom_vel_msg.angular.y = 0.0f;
 
                 static uint8_t consecutive_failures = 0;
                 static uint32_t last_error_log_ms = 0;
@@ -322,7 +328,7 @@ Rover::Rover() {
 
         return true;
     });
-    uros_client.onExecutorInit([&](rclc_executor_t *executor) {
+    uros_client.onExecutorInit(3, [&](rclc_executor_t *executor) {
         RCCHECK(rclc_executor_add_timer(executor, &timer));
         RCCHECK(rclc_executor_add_timer(executor, &odom_vel_timer));
         RCCHECK(rclc_executor_add_subscription(

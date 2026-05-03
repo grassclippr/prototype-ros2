@@ -6,6 +6,7 @@ import rclpy
 from geometry_msgs.msg import TransformStamped, Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from tf2_ros import TransformBroadcaster
 
 
@@ -35,7 +36,7 @@ class WheelVelocityOdomBridge(Node):
         odom_topic = self.get_parameter("odom_topic").value
         self._odom_pub = self.create_publisher(Odometry, odom_topic, 10)
         self._tf_broadcaster = TransformBroadcaster(self) if self._publish_tf else None
-        self.create_subscription(Twist, self._input_topic, self._twist_cb, 20)
+        self.create_subscription(Twist, self._input_topic, self._twist_cb, qos_profile_sensor_data)
 
         self._last_time = None
         self._x = 0.0

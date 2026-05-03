@@ -76,6 +76,19 @@ void UrosClient::reportNewState(ClientState new_state) {
     }
 }
 
+void UrosClient::requestReconnect(const char *reason) {
+    if (state != AGENT_CONNECTED) {
+        return;
+    }
+
+    if (reason != nullptr && reason[0] != '\0') {
+        printf("uros reconnect requested: %s\n", reason);
+    } else {
+        printf("uros reconnect requested\n");
+    }
+    state = AGENT_DISCONNECTED;
+}
+
 #ifndef SERIAL_MUX_SKIP_PING
 #define SERIAL_MUX_SKIP_PING 0
 #endif
@@ -102,10 +115,14 @@ bool UrosClient::create_entities() {
     }
 
     // COM
-    RCCHECK(rclc_executor_init(&executor, &support.context, 2, &allocator));
+    size_t executor_handle_count = 0;
+    for (auto &registration : onExecutorInitCallbacks) {
+        executor_handle_count += registration.handle_count;
+    }
+    RCCHECK(rclc_executor_init(&executor, &support.context, executor_handle_count, &allocator));
     executor_initialized = true;
-    for (auto &callback : onExecutorInitCallbacks) {
-        if (!callback(&executor)) {
+    for (auto &registration : onExecutorInitCallbacks) {
+        if (!registration.callback(&executor)) {
             return false;
         }
     }

@@ -7,6 +7,7 @@
 #include <rclc/executor.h>
 #include <rclc/rclc.h>
 
+#include <cstddef>
 #include <functional>
 #include <vector>
 
@@ -44,8 +45,8 @@ class UrosClient {
     void onCreateEntities(std::function<bool(rcl_node_t *node, rclc_support_t *support)> callback) {
         onCreateCallbacks.push_back(callback);
     }
-    void onExecutorInit(std::function<bool(rclc_executor_t *executor)> callback) {
-        onExecutorInitCallbacks.push_back(callback);
+    void onExecutorInit(size_t handle_count, std::function<bool(rclc_executor_t *executor)> callback) {
+        onExecutorInitCallbacks.push_back({handle_count, callback});
     }
     void onDestroyEntities(std::function<void(rcl_node_t *node, rclc_support_t *support)> callback) {
         onDestroyCallbacks.push_back(callback);
@@ -54,11 +55,17 @@ class UrosClient {
     bool isConnected() const {
         return state == AGENT_CONNECTED;
     }
+    void requestReconnect(const char *reason);
 
-   private:
+    private:
     static void urosTask(void *arg);
     static void timerCallback(rcl_timer_t *timer, int64_t last_call_time);
     void reportNewState(ClientState new_state);
+
+    struct ExecutorInitCallback {
+        size_t handle_count;
+        std::function<bool(rclc_executor_t *executor)> callback;
+    };
 
     bool create_entities();
     void destroy_entities();
@@ -66,7 +73,7 @@ class UrosClient {
     ClientState state = WAITING_AGENT;
     std::vector<std::function<void(ClientState)>> state_change_callbacks;
     std::vector<std::function<bool(rcl_node_t *node, rclc_support_t *support)>> onCreateCallbacks;
-    std::vector<std::function<bool(rclc_executor_t *executor)>> onExecutorInitCallbacks;
+    std::vector<ExecutorInitCallback> onExecutorInitCallbacks;
     std::vector<std::function<void(rcl_node_t *node, rclc_support_t *support)>> onDestroyCallbacks;
 
     rclc_executor_t executor = rclc_executor_get_zero_initialized_executor();
