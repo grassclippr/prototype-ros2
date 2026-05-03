@@ -190,11 +190,16 @@ Rover::Rover() {
         }
         wheel_cmd_msg_initialized = true;
 
-        rcl_ret_t rc = rclc_publisher_init_default(
+        rcl_ret_t rc = RCL_RET_ERROR;
+        rmw_qos_profile_t baseboard_qos = rmw_qos_profile_sensor_data;
+        baseboard_qos.history = RMW_QOS_POLICY_HISTORY_KEEP_LAST;
+        baseboard_qos.depth = 1;
+        rc = rclc_publisher_init(
             &publisher,
             node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-            "baseboard");
+            "baseboard",
+            &baseboard_qos);
         if (rc != RCL_RET_OK) {
             log_rcl_error("baseboard publisher init", rc);
             return false;

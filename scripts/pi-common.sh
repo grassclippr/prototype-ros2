@@ -13,7 +13,7 @@ if [ -f "${PROJECT_ROOT}/.env.deploy" ]; then
   set +a
 fi
 
-PI_HOST="${PI_HOST:-192.168.68.79}"
+PI_HOST="${PI_HOST:-192.168.68.81}"
 PI_USER="${PI_USER:-letharion}"
 PI_APP_DIR="${PI_APP_DIR:-/home/letharion/grassclippr}"
 TARGET_PLATFORM="${TARGET_PLATFORM:-linux/arm64}"
