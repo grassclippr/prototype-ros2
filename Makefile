@@ -1,5 +1,6 @@
 # Shared config lives in .env (also auto-loaded by compose).
 -include .env
+-include .env.deploy
 export
 
 PIO_PROJECT := rover/baseboard
@@ -35,6 +36,38 @@ CORE_CONTAINER_STAMP := .make/core-container.stamp
 .PHONY: flash
 flash: $(MICROROS_HEADER_MARKER)
 	@PIO_PROJECT=$(PIO_PROJECT) SERIAL_DEV=$(SERIAL_DEV) UPLOAD_PORT=$(UPLOAD_PORT) PROXY_PORT=$(PROXY_PORT) scripts/flash_with_restore.sh
+
+.PHONY: pi-status
+pi-status:
+	@./scripts/pi-status.sh
+
+.PHONY: pi-deploy-runtime
+pi-deploy-runtime:
+	@./scripts/pi-deploy-runtime.sh
+
+.PHONY: pi-export-runtime-seed
+pi-export-runtime-seed:
+	@./scripts/pi-export-runtime-seed.sh
+
+.PHONY: pi-deploy-esp32
+pi-deploy-esp32:
+	@./scripts/pi-deploy-esp32.sh
+
+.PHONY: pi-deploy
+pi-deploy: pi-deploy-runtime
+	@if [ "$(FLASH)" = "1" ]; then \
+		$(MAKE) pi-deploy-esp32; \
+	else \
+		echo "Runtime deployed. Use FLASH=1 make pi-deploy to also flash ESP32 firmware."; \
+	fi
+
+.PHONY: pi-logs
+pi-logs:
+	@./scripts/pi-logs.sh $(SERVICE)
+
+.PHONY: pi-rollback
+pi-rollback:
+	@./scripts/pi-rollback.sh
 
 .PHONY: baseboard-build
 baseboard-build: $(MICROROS_HEADER_MARKER)
