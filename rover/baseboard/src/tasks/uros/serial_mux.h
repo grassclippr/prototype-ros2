@@ -19,6 +19,7 @@ static constexpr uint8_t kMagic = 0xA7;
 static constexpr uint8_t kVersion = 0x01;
 
 static constexpr uint8_t kTypeRos = 0x01;
+static constexpr uint8_t kTypeDebug = 0x02;
 
 static constexpr uint8_t kFlagChunked = 0x01;
 static constexpr uint8_t kFlagChunkStart = 0x02;
@@ -32,7 +33,12 @@ class SerialMux {
     explicit SerialMux(Stream &stream);
 
     size_t writeRos(const uint8_t *data, size_t len);
+    size_t writeDebug(const uint8_t *data, size_t len);
     size_t readRos(uint8_t *data, size_t len, int timeout_ms);
+
+    // Called from panic/shutdown handler to release mutex so crash text
+    // can flow as raw bytes without deadlocking.
+    void panicFlush();
 
    private:
     Stream &stream_;

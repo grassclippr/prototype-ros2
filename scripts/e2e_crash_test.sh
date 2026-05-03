@@ -142,16 +142,24 @@ else
 fi
 
 echo "========================================="
-echo "Verifying ROS message receipt..."
+echo "Verifying ROS message receipt (/baseboard)..."
 echo "========================================="
 if wait_for_pattern_in_command 30 '^data:' "${COMPOSE_CMD} exec -T core bash -lc 'source /opt/ros/jazzy/setup.bash && ros2 topic echo /baseboard --once --timeout 20'"; then
     echo "✅ ROS message received successfully."
 else
     echo "❌ FAILED: Did not receive ROS data from /baseboard topic."
-    # Check if we can see ANY data on that topic
     echo "Recent proxy logs for context:"
     compose logs --tail 20 serial_mux_proxy
     exit 1
+fi
+
+echo "========================================="
+echo "Verifying /wheel_velocities topic..."
+echo "========================================="
+if wait_for_pattern_in_command 30 'linear:' "${COMPOSE_CMD} exec -T core bash -lc 'source /opt/ros/jazzy/setup.bash && ros2 topic echo /wheel_velocities --once --timeout 20'"; then
+    echo "✅ /wheel_velocities data received."
+else
+    echo "⚠️  /wheel_velocities not received (may require motor encoders). Continuing."
 fi
 
 echo "========================================="
@@ -160,10 +168,40 @@ echo "========================================="
 
 # We expect the ESP32 to crash 60 seconds after boot.
 if wait_for_crash_dump 80; then
-    echo "✅ E2E Crash Test PASSED: Crash dump was successfully received and decoded by proxy."
-    exit 0
+    echo "✅ Crash dump was successfully received and decoded by proxy."
 else
     echo "❌ E2E Crash Test FAILED: Did not see the crash dump in proxy logs."
     compose logs --tail 50 serial_mux_proxy
     exit 1
 fi
+
+echo "========================================="
+echo "Waiting for ESP32 reboot and ROS recovery..."
+echo "========================================="
+
+# After the crash, the ESP32 reboots automatically. Wait for the heartbeat
+# to confirm it came back up, then verify ROS topic is publishing again.
+if wait_for_pattern_in_command 60 'heartbeat [0-9]$' "${COMPOSE_CMD} logs --since 30s serial_mux_proxy"; then
+    echo "✅ ESP32 rebooted successfully (heartbeat detected)."
+else
+    echo "❌ FAILED: ESP32 did not recover after crash."
+    compose logs --tail 30 serial_mux_proxy
+    exit 1
+fi
+
+echo "========================================="
+echo "Verifying ROS topic resumes after crash recovery..."
+echo "========================================="
+
+if wait_for_pattern_in_command 40 '^data:' "${COMPOSE_CMD} exec -T core bash -lc 'source /opt/ros/jazzy/setup.bash && ros2 topic echo /baseboard --once --timeout 30'"; then
+    echo "✅ ROS message received after crash recovery."
+else
+    echo "❌ FAILED: ROS topic did not resume after crash recovery."
+    compose logs --tail 20 serial_mux_proxy
+    exit 1
+fi
+
+echo "========================================="
+echo "✅ E2E Crash Test PASSED: crash dump captured + ROS continuity verified."
+echo "========================================="
+exit 0

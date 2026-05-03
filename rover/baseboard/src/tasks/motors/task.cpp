@@ -125,7 +125,7 @@ void MotorControl::setupEncoders() {
     initPcntUnit(LEFT_PCNT_UNIT, LEFT_ENCODER_PIN);
     initPcntUnit(RIGHT_PCNT_UNIT, RIGHT_ENCODER_PIN);
     printf("PCNT encoders initialized (left=GPIO%d, right=GPIO%d)\n",
-           LEFT_ENCODER_PIN, RIGHT_ENCODER_PIN);
+               LEFT_ENCODER_PIN, RIGHT_ENCODER_PIN);
 }
 
 void MotorControl::readEncoders(float dt) {
@@ -224,14 +224,14 @@ void MotorControl::setup() {
     constexpr const char *safety_mode = "monitor";
 #endif
     printf("Safety %s enabled: lift_en=%d lift=%d one_wire_en=%d one_wire=%d uart_fault_en=%d uart_fault=%d triggered=%d\n",
-           safety_mode,
-           ROVER_ENABLE_LIFT,
-           lift_level,
-           ROVER_ENABLE_BUMPER_ONE_WIRE,
-           one_wire_level,
-           ROVER_ENABLE_BUMPER_UART_FAULT,
-           uart_fault_level,
-           safety_triggered_ ? 1 : 0);
+               safety_mode,
+               ROVER_ENABLE_LIFT,
+               lift_level,
+               ROVER_ENABLE_BUMPER_ONE_WIRE,
+               one_wire_level,
+               ROVER_ENABLE_BUMPER_UART_FAULT,
+               uart_fault_level,
+               safety_triggered_ ? 1 : 0);
 #endif
 
     ledc_timer_config_t timer_config = {};
@@ -360,14 +360,14 @@ bool MotorControl::safetyTriggered() {
     constexpr const char *mode = "monitor";
 #endif
     printf("Safety %s %s: lift_en=%d lift=%d one_wire_en=%d one_wire=%d uart_fault_en=%d uart_fault=%d\n",
-           mode,
-           safety_triggered_ ? "triggered" : "released",
-           ROVER_ENABLE_LIFT,
-           lift_level,
-           ROVER_ENABLE_BUMPER_ONE_WIRE,
-           one_wire_level,
-           ROVER_ENABLE_BUMPER_UART_FAULT,
-           uart_fault_level);
+               mode,
+               safety_triggered_ ? "triggered" : "released",
+               ROVER_ENABLE_LIFT,
+               lift_level,
+               ROVER_ENABLE_BUMPER_ONE_WIRE,
+               one_wire_level,
+               ROVER_ENABLE_BUMPER_UART_FAULT,
+               uart_fault_level);
     }
 
     return safety_triggered_;
@@ -387,8 +387,8 @@ void MotorControl::setWheelCommand(
         const uint32_t now_ms = millis();
         if (now_ms - last_command_log_ms >= 500) {
             printf("Rejected wheel_cmd due to safety interlock: left=%.3f right=%.3f\n",
-                   left_wheel_angular_velocity,
-                   right_wheel_angular_velocity);
+                       left_wheel_angular_velocity,
+                       right_wheel_angular_velocity);
             last_command_log_ms = now_ms;
         }
         stop();
@@ -408,8 +408,8 @@ void MotorControl::setWheelCommand(
          std::fabs(right_wheel_angular_velocity) > COMMAND_DEADBAND_RADPS) &&
         last_update_ms_ - last_command_log_ms >= 500) {
         printf("Accepted wheel_cmd: left=%.3f right=%.3f\n",
-               left_wheel_angular_velocity,
-               right_wheel_angular_velocity);
+                   left_wheel_angular_velocity,
+                   right_wheel_angular_velocity);
         last_command_log_ms = last_update_ms_;
     }
     // Actual duty is computed by PI loop in task()

@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 
+
 extern Preferences nvs;
 uint8_t peer_mac[6];
 bool peer_mac_valid = false;
@@ -71,7 +72,7 @@ bool loadPeerFromNVS() {
     peer_mac_valid = true;
 
     printf("Peer loaded successfully: %02x:%02x:%02x:%02x:%02x:%02x on channel %d\n",
-           peer_mac[0], peer_mac[1], peer_mac[2], peer_mac[3], peer_mac[4], peer_mac[5], peerInfo.channel);
+               peer_mac[0], peer_mac[1], peer_mac[2], peer_mac[3], peer_mac[4], peer_mac[5], peerInfo.channel);
     return true;
 }
 

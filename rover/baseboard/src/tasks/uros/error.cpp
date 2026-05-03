@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+
 namespace {
 
 constexpr size_t kMaxErrorBytes = 96;
@@ -102,22 +103,22 @@ void log_rcl_error(const char *what, rcl_ret_t rc) {
 
     if (error_string.str == nullptr) {
         printf("%s failed rc=%d (%s): <no error string>\n",
-               what,
-               static_cast<int>(rc),
-               rcl_ret_to_string(rc));
+                   what,
+                   static_cast<int>(rc),
+                   rcl_ret_to_string(rc));
     } else if (had_nonprintable) {
         printf("%s failed rc=%d (%s): ascii=\"%s\" hex=\"%s\"\n",
-               what,
-               static_cast<int>(rc),
-               rcl_ret_to_string(rc),
-               ascii_error,
-               hex_error);
+                   what,
+                   static_cast<int>(rc),
+                   rcl_ret_to_string(rc),
+                   ascii_error,
+                   hex_error);
     } else {
         printf("%s failed rc=%d (%s): %s\n",
-               what,
-               static_cast<int>(rc),
-               rcl_ret_to_string(rc),
-               ascii_error);
+                   what,
+                   static_cast<int>(rc),
+                   rcl_ret_to_string(rc),
+                   ascii_error);
     }
     rcl_reset_error();
 }

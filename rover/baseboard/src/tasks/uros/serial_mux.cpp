@@ -122,6 +122,54 @@ size_t SerialMux::writeRos(const uint8_t *data, size_t len) {
     return len;
 }
 
+size_t SerialMux::writeDebug(const uint8_t *data, size_t len) {
+    if (!data || len == 0) {
+        return 0;
+    }
+
+    uint16_t msg_id = 0;
+    if (len > kMaxPayload) {
+        msg_id = static_cast<uint16_t>(debug_msg_id_ + 1u);
+        debug_msg_id_ = msg_id;
+    }
+
+    size_t offset = 0;
+    while (offset < len) {
+        size_t chunk = len - offset;
+        if (chunk > kMaxPayload) {
+            chunk = kMaxPayload;
+        }
+        uint8_t flags = 0;
+        if (len > kMaxPayload) {
+            flags |= kFlagChunked;
+            if (offset == 0) {
+                flags |= kFlagChunkStart;
+            }
+            if (offset + chunk >= len) {
+                flags |= kFlagChunkEnd;
+            }
+        }
+        writeFrame(kTypeDebug, flags, msg_id, data + offset, chunk);
+        offset += chunk;
+    }
+    return len;
+}
+
+void SerialMux::panicFlush() {
+    // Best-effort: send an END byte to terminate any in-flight frame,
+    // then release the mutex so raw panic output doesn't deadlock.
+    if (write_mutex_ != nullptr) {
+        // Try to take mutex briefly; if we can't, skip (we're in panic).
+        if (xSemaphoreTake(write_mutex_, pdMS_TO_TICKS(10)) == pdTRUE) {
+            uint8_t end_byte = kEnd;
+            stream_.write(&end_byte, 1);
+            xSemaphoreGive(write_mutex_);
+        }
+    }
+    // Disable the mutex for subsequent writes (panic handler is single-threaded)
+    write_mutex_ = nullptr;
+}
+
 size_t SerialMux::readRos(uint8_t *data, size_t len, int timeout_ms) {
     if (!data || len == 0) {
         return 0;

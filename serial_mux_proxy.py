@@ -130,6 +130,7 @@ class SerialMuxProxy:
         reassembly_timeout: float = 1.0,
         max_reassembly_bytes: int = 4096,
         max_raw_buffer_bytes: int = 65536,
+        frame_timeout: float = 0.2,
         stats_interval: float = 10.0,
         dump_ros: int = 0,
         dump_bad_frames: int = 0,
@@ -142,6 +143,7 @@ class SerialMuxProxy:
         self.reassembly_timeout = reassembly_timeout
         self.max_reassembly_bytes = max_reassembly_bytes
         self.max_raw_buffer_bytes = max_raw_buffer_bytes
+        self.frame_timeout = frame_timeout
         self.stats_interval = stats_interval
         self.dump_ros = dump_ros
         self.dump_bad_frames = dump_bad_frames
@@ -171,6 +173,7 @@ class SerialMuxProxy:
             "debug_reassembly_drop": 0,
             "ros_reassembly_drop": 0,
             "raw_buffer_drop": 0,
+            "frame_timeout_flush": 0,
         }
         self.ros_len_hist: Dict[int, int] = {}
 
@@ -262,14 +265,23 @@ class SerialMuxProxy:
             return
 
         buffer = bytearray()
+        buffer_first_byte_time: float = 0.0
         while self.running and self.serial_port:
             try:
                 data = self.serial_port.read(self.serial_port.in_waiting or 1)
                 if not data:
-                    if buffer:
-                        _dump_debug(bytes(buffer))
-                        buffer.clear()
+                    # No data arrived — check if buffer has stale partial frame
+                    if buffer and buffer_first_byte_time > 0:
+                        elapsed = self.time_fn() - buffer_first_byte_time
+                        if elapsed >= self.frame_timeout:
+                            self.stats["frame_timeout_flush"] += 1
+                            _dump_debug(bytes(buffer))
+                            buffer.clear()
+                            buffer_first_byte_time = 0.0
                     continue
+
+                if not buffer:
+                    buffer_first_byte_time = self.time_fn()
                 buffer.extend(data)
 
                 while True:
@@ -279,6 +291,8 @@ class SerialMuxProxy:
 
                     raw_frame = bytes(buffer[:end_idx])
                     buffer = buffer[end_idx + 1 :]
+                    # Reset timer since we consumed up to END
+                    buffer_first_byte_time = self.time_fn() if buffer else 0.0
                     if not raw_frame:
                         continue
 
@@ -314,9 +328,19 @@ class SerialMuxProxy:
                         continue
 
                     self._handle_frame(frame)
-                if len(buffer) > self.max_raw_buffer_bytes:
+
+                # Check frame timeout for remaining buffer content
+                if buffer and buffer_first_byte_time > 0:
+                    elapsed = self.time_fn() - buffer_first_byte_time
+                    if elapsed >= self.frame_timeout:
+                        self.stats["frame_timeout_flush"] += 1
+                        _dump_debug(bytes(buffer))
+                        buffer.clear()
+                        buffer_first_byte_time = 0.0
+                elif len(buffer) > self.max_raw_buffer_bytes:
                     _dump_debug(bytes(buffer))
                     buffer.clear()
+                    buffer_first_byte_time = 0.0
             except Exception as exc:
                 print(f"Serial read error: {exc}")
                 break

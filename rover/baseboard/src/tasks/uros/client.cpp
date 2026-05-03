@@ -11,6 +11,7 @@
 #endif
 #if SERIAL_MUX_ENABLE
 #include "./serial_mux.h"
+#include "./serial_mux_log.h"
 #include "./serial_mux_transport.h"
 #endif
 
@@ -160,6 +161,9 @@ void UrosClient::setup(Stream & stream) {
     #if SERIAL_MUX_ENABLE
     static serial_mux::SerialMux mux(stream);
 
+    serial_mux::installLogRedirect(&mux);
+    serial_mux::installPanicHandler(&mux);
+
     rmw_uros_set_custom_transport(
         SERIAL_MUX_PACKET_MODE ? MICROROS_TRANSPORTS_PACKET_MODE : MICROROS_TRANSPORTS_FRAMING_MODE,
         &mux,
@@ -200,7 +204,7 @@ void UrosClient::urosTask(void *arg) {
         if ((now - lastStackReport) * portTICK_RATE_MS >= kStackReportIntervalMs) {
             UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
             printf("uros stack hwm=%lu words\n",
-                   static_cast<unsigned long>(hwm));
+                       static_cast<unsigned long>(hwm));
             lastStackReport = now;
         }
 #endif

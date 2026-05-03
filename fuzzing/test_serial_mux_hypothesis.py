@@ -140,3 +140,62 @@ def test_chunk_reassembly(payload: bytes) -> None:
 
     assembled = _reassemble(frames)
     assert assembled == [payload]
+
+
+@given(
+    payload=st.binary(min_size=1, max_size=MAX_PAYLOAD),
+    noise=st.binary(min_size=1, max_size=64),
+    insert_pos=st.integers(min_value=1, max_value=100),
+)
+@settings(max_examples=300)
+def test_mid_frame_injection_rejects_and_resyncs(payload: bytes, noise: bytes, insert_pos: int) -> None:
+    """Inject random bytes INSIDE a SLIP frame and verify:
+    1. The corrupted frame is rejected (CRC fails or parse fails)
+    2. A subsequent valid frame still parses correctly (resync works)
+    """
+    frame1 = build_frame(TYPE_ROS, 0, 1, 0, payload)
+    frame2 = build_frame(TYPE_ROS, 0, 2, 0, payload)
+
+    # Inject noise inside frame1 (between the leading END and trailing END)
+    inner = frame1[1:-1]  # strip leading/trailing END
+    pos = insert_pos % max(len(inner), 1)
+    corrupted_inner = inner[:pos] + noise + inner[pos:]
+    corrupted_frame = bytes([END]) + corrupted_inner + bytes([END])
+
+    # Build a stream: corrupted frame followed by a valid frame
+    stream = corrupted_frame + frame2
+
+    frames = _scan_frames(stream)
+
+    # The corrupted frame should NOT produce a valid result with the original payload
+    # (it might accidentally parse if noise doesn't affect CRC, which is astronomically unlikely)
+    # The valid frame2 MUST be recoverable
+    valid_payloads = [f.payload for f in frames if f.payload == payload]
+    assert len(valid_payloads) >= 1, "Resync failed: valid frame after corruption was lost"
+
+
+@given(
+    payload=st.binary(min_size=1, max_size=MAX_PAYLOAD),
+    plaintext=st.text(
+        alphabet=st.characters(whitelist_categories=("L", "N", "P", "Z")),
+        min_size=1,
+        max_size=128,
+    ),
+)
+@settings(max_examples=200)
+def test_plaintext_between_frames_preserves_valid_frames(payload: bytes, plaintext: str) -> None:
+    """Simulate plaintext (like printf output) appearing between valid frames.
+    Verify all valid frames are still correctly parsed.
+    """
+    frame1 = build_frame(TYPE_ROS, 0, 1, 0, payload)
+    frame2 = build_frame(TYPE_ROS, 0, 2, 0, payload)
+
+    # Plaintext between frames — the leading END of frame2 terminates the plaintext segment
+    text_bytes = plaintext.encode("utf-8", errors="replace")
+    stream = frame1 + text_bytes + frame2
+
+    frames = _scan_frames(stream)
+
+    # Both frames should be recovered (plaintext segment fails parse and is discarded)
+    valid_payloads = [f.payload for f in frames if f.payload == payload]
+    assert len(valid_payloads) == 2

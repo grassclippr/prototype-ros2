@@ -113,9 +113,9 @@ bool publishWithReconnect(
     const uint32_t now_ms = millis();
     if (now_ms - last_error_log_ms >= 1000) {
         printf("Failed to publish %s (rc=%d, failures=%u)\n",
-               publisher_name,
-               static_cast<int>(rc),
-               static_cast<unsigned>(consecutive_failures));
+                   publisher_name,
+                   static_cast<int>(rc),
+                   static_cast<unsigned>(consecutive_failures));
         last_error_log_ms = now_ms;
     }
     if (consecutive_failures >= PUBLISH_FAILURES_BEFORE_RECONNECT) {
@@ -591,7 +591,7 @@ void Rover::onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t le
         case MSG_TYPE_PAIR_REQ: {
             if (pairingTaskHandle == nullptr) {
                 printf("Pairing request received from %02x:%02x:%02x:%02x:%02x:%02x, but not in pairing mode\n",
-                       mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+                           mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
                 return;
             }
 
