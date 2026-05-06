@@ -233,8 +233,8 @@ esp32-verify-build-flash: podman-stop-proxy cppcheck-baseboard
 
 .PHONY: podman-core-rebuild-msgs
 podman-core-rebuild-msgs:
-	@echo "Rebuilding rover_description in core container..."
-	@podman exec core bash -lc 'source /opt/ros/jazzy/setup.bash && cd /root/ros2_ws && colcon build --packages-select rover_description' 2>&1
+	@echo "Rebuilding ROS wheel-control packages in core container..."
+	@podman exec core bash -lc 'source /opt/ros/jazzy/setup.bash && cd /root/ros2_ws && colcon build --packages-select rover_hardware rover_description rover_navigation' 2>&1
 
 .PHONY: e2e
 e2e: flash

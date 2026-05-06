@@ -12,7 +12,6 @@ PACKAGE_NAME = "rover_navigation"
 def generate_launch_description():
     use_imu = LaunchConfiguration("use_imu")
     use_gnss = LaunchConfiguration("use_gnss")
-    publish_wheel_tf = LaunchConfiguration("publish_wheel_tf")
     publish_map_odom_identity = LaunchConfiguration("publish_map_odom_identity")
     imu_i2c_bus = LaunchConfiguration("imu_i2c_bus")
     imu_address = LaunchConfiguration("imu_address")
@@ -51,11 +50,6 @@ def generate_launch_description():
             "use_gnss",
             default_value="false",
             description="Start nmea_navsat_driver and navsat_transform_node.",
-        ),
-        DeclareLaunchArgument(
-            "publish_wheel_tf",
-            default_value="false",
-            description="Let the wheel bridge publish odom->base_link. Keep false when EKF publishes TF.",
         ),
         DeclareLaunchArgument(
             "publish_map_odom_identity",
@@ -125,20 +119,6 @@ def generate_launch_description():
                 "publish_rate_hz": imu_publish_rate,
             }],
             condition=IfCondition(use_imu),
-        ),
-
-        Node(
-            package=PACKAGE_NAME,
-            executable="wheel_velocity_odom_bridge.py",
-            name="wheel_velocity_odom_bridge",
-            output="screen",
-            parameters=[{
-                "input_topic": "/wheel_velocities",
-                "odom_topic": "/wheel/odom",
-                "odom_frame": "odom",
-                "base_frame": "base_link",
-                "publish_tf": publish_wheel_tf,
-            }],
         ),
 
         Node(

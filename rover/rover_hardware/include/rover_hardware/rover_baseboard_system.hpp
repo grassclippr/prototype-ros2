@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+#include <mutex>
 #include <vector>
 
 #include <geometry_msgs/msg/twist.hpp>
@@ -25,13 +27,21 @@ class RoverBaseboardSystem : public hardware_interface::SystemInterface {
     hardware_interface::return_type write(const rclcpp::Time &time, const rclcpp::Duration &period) override;
 
    private:
+    void wheelVelocityCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
     void publishWheelCommand();
 
     rclcpp::Node::SharedPtr node_;
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr wheel_command_pub_;
+    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr wheel_velocity_sub_;
+    std::mutex feedback_mutex_;
     std::vector<double> wheel_positions_;
     std::vector<double> wheel_velocities_;
     std::vector<double> wheel_commands_;
+    std::vector<double> feedback_wheel_velocities_;
+    std::chrono::steady_clock::time_point last_feedback_time_;
+    double wheel_radius_ = 0.127;
+    double feedback_timeout_sec_ = 0.25;
+    bool have_feedback_ = false;
 };
 
 }  // namespace rover_hardware

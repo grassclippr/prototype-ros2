@@ -6,7 +6,7 @@ import termios
 import tty
 
 import rclpy
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import TwistStamped
 from rclpy.node import Node
 
 
@@ -24,7 +24,7 @@ def clamp(value: float, minimum: float, maximum: float) -> float:
 class KeyboardTwistTeleop(Node):
     def __init__(self) -> None:
         super().__init__("keyboard_twist_teleop")
-        self._publisher = self.create_publisher(Twist, "/cmd_vel", 10)
+        self._publisher = self.create_publisher(TwistStamped, "/diff_drive_controller/cmd_vel", 10)
         self._linear = 0.0
         self._angular = 0.0
         self._timer = self.create_timer(PUBLISH_PERIOD_SEC, self._publish)
@@ -58,9 +58,11 @@ class KeyboardTwistTeleop(Node):
         )
 
     def _publish(self) -> None:
-        msg = Twist()
-        msg.linear.x = self._linear
-        msg.angular.z = self._angular
+        msg = TwistStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "base_link"
+        msg.twist.linear.x = self._linear
+        msg.twist.angular.z = self._angular
         self._publisher.publish(msg)
 
     def stop(self) -> None:
@@ -82,7 +84,7 @@ def main(args=None) -> None:
     rclpy.init(args=args)
     node = KeyboardTwistTeleop()
 
-    print("Keyboard teleop -> /cmd_vel")
+    print("Keyboard teleop -> /diff_drive_controller/cmd_vel")
     print("  w/s : increase/decrease linear speed")
     print("  a/d : increase/decrease angular speed")
     print("  x or space : stop")

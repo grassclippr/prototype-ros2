@@ -33,7 +33,7 @@ class OdomCalibrationCheck(Node):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Summarize odom displacement over a short manual calibration run.")
-    parser.add_argument("--topic", default="/wheel/odom")
+    parser.add_argument("--topic", default="/diff_drive_controller/odom")
     parser.add_argument("--duration", type=float, default=10.0)
     args = parser.parse_args()
 

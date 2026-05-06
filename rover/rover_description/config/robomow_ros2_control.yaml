@@ -18,10 +18,10 @@ diff_drive_controller:
     publish_rate: 50.0
     base_frame_id: base_link
     odom_frame_id: odom
-    use_stamped_vel: false
-    enable_odom_tf: true
+    use_stamped_vel: true
+    enable_odom_tf: false
     cmd_vel_timeout: 0.5
-    open_loop: true # no feedback available
+    open_loop: false
     publish_limited_velocity: true
 
 hardware:

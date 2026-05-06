@@ -83,6 +83,7 @@ try:
     end_time = time.monotonic() + duration_sec
     while time.monotonic() < end_time:
         msg = TwistStamped()
+        msg.header.stamp = node.get_clock().now().to_msg()
         msg.header.frame_id = 'base_link'
         msg.twist.linear.x = linear_x
         msg.twist.angular.z = angular_z
@@ -91,6 +92,7 @@ try:
         time.sleep(period_sec)
 
     msg = TwistStamped()
+    msg.header.stamp = node.get_clock().now().to_msg()
     msg.header.frame_id = 'base_link'
     publisher.publish(msg)
     rclpy.spin_once(node, timeout_sec=0.0)

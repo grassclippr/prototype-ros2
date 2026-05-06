@@ -28,6 +28,8 @@
 <ros2_control name="RobomowSystem" type="system">
   <hardware>
 	  <plugin>$(arg hardware_plugin)</plugin>
+    <param name="wheel_radius">0.127</param>
+    <param name="feedback_timeout_sec">0.25</param>
   </hardware>
   <joint name="left_wheel_motor_joint">
     <command_interface name="velocity"/>
