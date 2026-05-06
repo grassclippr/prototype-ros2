@@ -65,10 +65,7 @@ constexpr bool MOTOR_ENABLE_ACTIVE_HIGH = true;
 constexpr bool LEFT_MOTOR_INVERTED = true;
 constexpr bool RIGHT_MOTOR_INVERTED = false;
 
-// Keep the initial bring-up conservative.
-constexpr float WHEEL_RADIUS_METERS = 0.127f;
-constexpr float MAX_WHEEL_LINEAR_SPEED_MPS = 0.20f;
-constexpr float COMMAND_DEADBAND_RADPS = 0.01f;
+constexpr float COMMAND_DEADBAND_PERCENT = 0.5f;
 constexpr uint32_t SAFETY_DEBOUNCE_MS = 30;
 
 // Encoder pins (single-channel, asymmetric — count rising edges only)
@@ -146,15 +143,15 @@ void MotorControl::readEncoders(float dt) {
     left_wheel_.ticks  += left_signed;
     right_wheel_.ticks += right_signed;
 
-    // Compute raw velocity and push into moving average
-    float left_raw_vel  = (static_cast<float>(left_signed)  / TICKS_PER_METER) / dt;
-    float right_raw_vel = (static_cast<float>(right_signed) / TICKS_PER_METER) / dt;
+    // Compute raw tick velocity and push into moving average.
+    float left_raw_vel  = static_cast<float>(left_signed) / dt;
+    float right_raw_vel = static_cast<float>(right_signed) / dt;
 
     left_vel_avg_.push(left_raw_vel);
     right_vel_avg_.push(right_raw_vel);
 
-    left_wheel_.velocity_mps  = left_vel_avg_.average();
-    right_wheel_.velocity_mps = right_vel_avg_.average();
+    left_wheel_.velocity_ticks_per_sec = left_vel_avg_.average();
+    right_wheel_.velocity_ticks_per_sec = right_vel_avg_.average();
 }
 
 float MotorControl::piControl(float setpoint, float measured, PiState &pi) {
@@ -209,13 +206,19 @@ void MotorControl::setup() {
     const int lift_level = gpio_get_level(LIFT_PIN);
     const int one_wire_level = gpio_get_level(BUMPER_ONE_WIRE_PIN);
     const int uart_fault_level = gpio_get_level(BUMPER_UART_FAULT_PIN);
+    lift_triggered_ =
+        ROVER_ENABLE_LIFT &&
+        lift_level == LIFT_ACTIVE_LEVEL;
+    bumper_one_wire_triggered_ =
+        ROVER_ENABLE_BUMPER_ONE_WIRE &&
+        one_wire_level == BUMPER_ONE_WIRE_ACTIVE_LEVEL;
+    bumper_uart_fault_triggered_ =
+        ROVER_ENABLE_BUMPER_UART_FAULT &&
+        uart_fault_level == BUMPER_UART_FAULT_ACTIVE_LEVEL;
     safety_triggered_ =
-        (ROVER_ENABLE_LIFT &&
-         lift_level == LIFT_ACTIVE_LEVEL) ||
-        (ROVER_ENABLE_BUMPER_ONE_WIRE &&
-         one_wire_level == BUMPER_ONE_WIRE_ACTIVE_LEVEL) ||
-        (ROVER_ENABLE_BUMPER_UART_FAULT &&
-         uart_fault_level == BUMPER_UART_FAULT_ACTIVE_LEVEL);
+        lift_triggered_ ||
+        bumper_one_wire_triggered_ ||
+        bumper_uart_fault_triggered_;
     safety_raw_triggered_ = safety_triggered_;
     safety_raw_changed_ms_ = millis();
 #if ROVER_ENFORCE_SAFETY_INTERLOCK
@@ -291,25 +294,35 @@ void MotorControl::task(void *arg) {
             continue;
         }
 
-        float left_wheel_angular_velocity = command.left_wheel_angular_velocity;
-        float right_wheel_angular_velocity = command.right_wheel_angular_velocity;
+        float left_speed_percent = command.left_speed_percent;
+        float right_speed_percent = command.right_speed_percent;
 
-        if (std::fabs(left_wheel_angular_velocity) < COMMAND_DEADBAND_RADPS) {
-            left_wheel_angular_velocity = 0.0f;
+        if (std::fabs(left_speed_percent) < COMMAND_DEADBAND_PERCENT) {
+            left_speed_percent = 0.0f;
         }
-        if (std::fabs(right_wheel_angular_velocity) < COMMAND_DEADBAND_RADPS) {
-            right_wheel_angular_velocity = 0.0f;
+        if (std::fabs(right_speed_percent) < COMMAND_DEADBAND_PERCENT) {
+            right_speed_percent = 0.0f;
         }
 
-        const float left_setpoint = left_wheel_angular_velocity * WHEEL_RADIUS_METERS;
-        const float right_setpoint = right_wheel_angular_velocity * WHEEL_RADIUS_METERS;
+        const float left_setpoint_ticks_per_sec =
+            (left_speed_percent / 100.0f) * MAX_MOTOR_TICKS_PER_SECOND;
+        const float right_setpoint_ticks_per_sec =
+            (right_speed_percent / 100.0f) * MAX_MOTOR_TICKS_PER_SECOND;
+        const float left_measured_normalized =
+            self->left_wheel_.velocity_ticks_per_sec / MAX_MOTOR_TICKS_PER_SECOND;
+        const float right_measured_normalized =
+            self->right_wheel_.velocity_ticks_per_sec / MAX_MOTOR_TICKS_PER_SECOND;
+        const float left_setpoint_normalized =
+            left_setpoint_ticks_per_sec / MAX_MOTOR_TICKS_PER_SECOND;
+        const float right_setpoint_normalized =
+            right_setpoint_ticks_per_sec / MAX_MOTOR_TICKS_PER_SECOND;
 
         // Remember direction for encoder sign inference
-        self->last_left_dir_  = left_setpoint;
-        self->last_right_dir_ = right_setpoint;
+        self->last_left_dir_  = left_setpoint_ticks_per_sec;
+        self->last_right_dir_ = right_setpoint_ticks_per_sec;
 
-        float left_duty  = self->piControl(left_setpoint, self->left_wheel_.velocity_mps, self->left_pi_);
-        float right_duty = self->piControl(right_setpoint, self->right_wheel_.velocity_mps, self->right_pi_);
+        float left_duty  = self->piControl(left_setpoint_normalized, left_measured_normalized, self->left_pi_);
+        float right_duty = self->piControl(right_setpoint_normalized, right_measured_normalized, self->right_pi_);
 
         self->applyWheelDuties(left_duty, right_duty);
     }
@@ -337,13 +350,19 @@ bool MotorControl::safetyTriggered() {
     const int lift_level = gpio_get_level(LIFT_PIN);
     const int one_wire_level = gpio_get_level(BUMPER_ONE_WIRE_PIN);
     const int uart_fault_level = gpio_get_level(BUMPER_UART_FAULT_PIN);
+    lift_triggered_ =
+        ROVER_ENABLE_LIFT &&
+        lift_level == LIFT_ACTIVE_LEVEL;
+    bumper_one_wire_triggered_ =
+        ROVER_ENABLE_BUMPER_ONE_WIRE &&
+        one_wire_level == BUMPER_ONE_WIRE_ACTIVE_LEVEL;
+    bumper_uart_fault_triggered_ =
+        ROVER_ENABLE_BUMPER_UART_FAULT &&
+        uart_fault_level == BUMPER_UART_FAULT_ACTIVE_LEVEL;
     const bool raw_triggered =
-        (ROVER_ENABLE_LIFT &&
-         lift_level == LIFT_ACTIVE_LEVEL) ||
-        (ROVER_ENABLE_BUMPER_ONE_WIRE &&
-         one_wire_level == BUMPER_ONE_WIRE_ACTIVE_LEVEL) ||
-        (ROVER_ENABLE_BUMPER_UART_FAULT &&
-         uart_fault_level == BUMPER_UART_FAULT_ACTIVE_LEVEL);
+        lift_triggered_ ||
+        bumper_one_wire_triggered_ ||
+        bumper_uart_fault_triggered_;
     const uint32_t now_ms = millis();
 
     if (raw_triggered != safety_raw_triggered_) {
@@ -377,8 +396,8 @@ bool MotorControl::safetyTriggered() {
 }
 
 void MotorControl::setWheelCommand(
-    float left_wheel_angular_velocity,
-    float right_wheel_angular_velocity,
+    float left_speed_percent,
+    float right_speed_percent,
     uint32_t seq,
     uint32_t timeout_ms) {
     static uint32_t last_command_log_ms = 0;
@@ -386,9 +405,9 @@ void MotorControl::setWheelCommand(
     if (safetyTriggered()) {
         const uint32_t now_ms = millis();
         if (now_ms - last_command_log_ms >= 500) {
-            printf("Rejected wheel_cmd due to safety interlock: left=%.3f right=%.3f\n",
-                       left_wheel_angular_velocity,
-                       right_wheel_angular_velocity);
+            printf("Rejected motor_command due to safety interlock: left=%.1f%% right=%.1f%%\n",
+                       left_speed_percent,
+                       right_speed_percent);
             last_command_log_ms = now_ms;
         }
         stop();
@@ -398,26 +417,39 @@ void MotorControl::setWheelCommand(
     safetyTriggered();
 #endif
 
-    left_wheel_angular_velocity_ = left_wheel_angular_velocity;
-    right_wheel_angular_velocity_ = right_wheel_angular_velocity;
+    if (left_speed_percent > 100.0f) left_speed_percent = 100.0f;
+    if (left_speed_percent < -100.0f) left_speed_percent = -100.0f;
+    if (right_speed_percent > 100.0f) right_speed_percent = 100.0f;
+    if (right_speed_percent < -100.0f) right_speed_percent = -100.0f;
+
+    if (std::fabs(left_speed_percent) < COMMAND_DEADBAND_PERCENT &&
+        std::fabs(right_speed_percent) < COMMAND_DEADBAND_PERCENT) {
+        stop();
+        timeout_ms_ = timeout_ms;
+        last_update_ms_ = millis();
+        return;
+    }
+
+    left_speed_percent_ = left_speed_percent;
+    right_speed_percent_ = right_speed_percent;
     seq_ = seq;
     timeout_ms_ = timeout_ms;
     last_update_ms_ = millis();
     active_ = true;
-    if ((std::fabs(left_wheel_angular_velocity) > COMMAND_DEADBAND_RADPS ||
-         std::fabs(right_wheel_angular_velocity) > COMMAND_DEADBAND_RADPS) &&
+    if ((std::fabs(left_speed_percent) > COMMAND_DEADBAND_PERCENT ||
+         std::fabs(right_speed_percent) > COMMAND_DEADBAND_PERCENT) &&
         last_update_ms_ - last_command_log_ms >= 500) {
-        printf("Accepted wheel_cmd: left=%.3f right=%.3f\n",
-                   left_wheel_angular_velocity,
-                   right_wheel_angular_velocity);
+        printf("Accepted motor_command: left=%.1f%% right=%.1f%%\n",
+                   left_speed_percent,
+                   right_speed_percent);
         last_command_log_ms = last_update_ms_;
     }
     // Actual duty is computed by PI loop in task()
 }
 
 void MotorControl::stop() {
-    left_wheel_angular_velocity_ = 0.0f;
-    right_wheel_angular_velocity_ = 0.0f;
+    left_speed_percent_ = 0.0f;
+    right_speed_percent_ = 0.0f;
     active_ = false;
     left_pi_.integral  = 0.0f;
     right_pi_.integral = 0.0f;
@@ -444,11 +476,21 @@ bool MotorControl::expireIfTimedOut(uint32_t now_ms, uint32_t *expired_seq) {
 
 MotorControl::Command MotorControl::getCommand() const {
     Command command;
-    command.left_wheel_angular_velocity = left_wheel_angular_velocity_;
-    command.right_wheel_angular_velocity = right_wheel_angular_velocity_;
+    command.left_speed_percent = left_speed_percent_;
+    command.right_speed_percent = right_speed_percent_;
     command.seq = seq_;
     command.timeout_ms = timeout_ms_;
     command.last_update_ms = last_update_ms_;
     command.active = active_;
     return command;
+}
+
+MotorControl::SafetyState MotorControl::getSafetyState() {
+    safetyTriggered();
+    SafetyState state;
+    state.interlock_triggered = safety_triggered_;
+    state.lift_triggered = lift_triggered_;
+    state.bumper_one_wire_triggered = bumper_one_wire_triggered_;
+    state.bumper_uart_fault_triggered = bumper_uart_fault_triggered_;
+    return state;
 }

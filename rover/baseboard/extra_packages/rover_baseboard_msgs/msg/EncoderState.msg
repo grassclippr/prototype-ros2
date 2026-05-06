@@ -1,0 +1,4 @@
+int64 left_ticks
+int64 right_ticks
+float32 left_velocity_ticks_per_sec
+float32 right_velocity_ticks_per_sec

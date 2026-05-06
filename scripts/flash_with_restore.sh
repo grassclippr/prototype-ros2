@@ -53,7 +53,7 @@ fi
 . ~/.platformio/penv/bin/activate
 
 # Ensure micro-ROS headers exist
-HEADER_PATH="$PIO_PROJECT/.pio/libdeps/LynxAdapter_v1_0/micro_ros_platformio/libmicroros/include/nmea_msgs/msg/sentence.h"
+HEADER_PATH="$PIO_PROJECT/.pio/libdeps/LynxAdapter_v1_0/micro_ros_platformio/libmicroros/include/rover_baseboard_msgs/msg/motor_command.h"
 if [ ! -f "$HEADER_PATH" ]; then
     echo "Warning: micro-ROS headers not found. Attempting a full build..."
     pio run -d "$PIO_PROJECT" -e LynxAdapter_v1_0

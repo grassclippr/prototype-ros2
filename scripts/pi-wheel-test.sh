@@ -27,8 +27,9 @@ set -euo pipefail
 
 remote_dir="$(mktemp -d /tmp/wheel-test.XXXXXX)"
 motor_log="${remote_dir}/motor.log"
-feedback_log="${remote_dir}/feedback.log"
+encoder_log="${remote_dir}/encoder.log"
 cmd_vel_log="${remote_dir}/cmd_vel.log"
+cmd_vel_out_log="${remote_dir}/cmd_vel_out.log"
 topic_list_log="${remote_dir}/topics.log"
 
 cleanup() {
@@ -41,8 +42,9 @@ ros_env='source /opt/ros/jazzy/setup.bash && source /root/ros2_ws/install/setup.
 podman exec core bash -lc "${ros_env} && ros2 topic list -t" >"${topic_list_log}"
 required_topics=(
   '/diff_drive_controller/cmd_vel '
-  '/wheel_cmd '
-  '/wheel_velocities '
+  '/diff_drive_controller/cmd_vel_out '
+  '/baseboard/motor_command '
+  '/baseboard/encoder_state '
 )
 for topic in "${required_topics[@]}"; do
   if ! grep -Fq "${topic}" "${topic_list_log}"; then
@@ -52,12 +54,14 @@ for topic in "${required_topics[@]}"; do
   fi
 done
 
-podman exec core bash -lc "${ros_env} && timeout ${OBSERVE_MOTOR_SEC} ros2 topic echo /wheel_cmd" >"${motor_log}" 2>&1 &
+podman exec core bash -lc "${ros_env} && timeout ${OBSERVE_MOTOR_SEC} ros2 topic echo /baseboard/motor_command --qos-reliability best_effort --qos-depth 1" >"${motor_log}" 2>&1 &
 motor_pid=$!
-podman exec core bash -lc "${ros_env} && timeout ${OBSERVE_ENCODER_SEC} ros2 topic echo /wheel_velocities" >"${feedback_log}" 2>&1 &
-feedback_pid=$!
+podman exec core bash -lc "${ros_env} && timeout ${OBSERVE_ENCODER_SEC} ros2 topic echo /baseboard/encoder_state --qos-profile sensor_data" >"${encoder_log}" 2>&1 &
+encoder_pid=$!
 podman exec core bash -lc "${ros_env} && timeout ${OBSERVE_ENCODER_SEC} ros2 topic echo /diff_drive_controller/cmd_vel" >"${cmd_vel_log}" 2>&1 &
 cmd_vel_pid=$!
+podman exec core bash -lc "${ros_env} && timeout ${OBSERVE_ENCODER_SEC} ros2 topic echo /diff_drive_controller/cmd_vel_out" >"${cmd_vel_out_log}" 2>&1 &
+cmd_vel_out_pid=$!
 
 sleep 1
 podman exec core bash -lc "${ros_env} && \
@@ -102,27 +106,33 @@ finally:
 PY"
 
 wait "${motor_pid}" || true
-wait "${feedback_pid}" || true
+wait "${encoder_pid}" || true
 wait "${cmd_vel_pid}" || true
+wait "${cmd_vel_out_pid}" || true
 
-python3 - "${motor_log}" "${feedback_log}" "${cmd_vel_log}" <<'PY'
+python3 - "${motor_log}" "${encoder_log}" "${cmd_vel_log}" "${cmd_vel_out_log}" <<'PY'
 import re
 import sys
 from pathlib import Path
 
 motor_log = Path(sys.argv[1]).read_text()
-feedback_log = Path(sys.argv[2]).read_text()
+encoder_log = Path(sys.argv[2]).read_text()
 cmd_vel_log = Path(sys.argv[3]).read_text()
+cmd_vel_out_log = Path(sys.argv[4]).read_text()
 
 def count_blocks(text: str) -> int:
     return sum(1 for block in text.split('---') if block.strip())
 
-motor_samples = re.findall(r"linear:\s+x: ([0-9.\-]+)\s+y: ([0-9.\-]+)", motor_log)
-feedback_samples = re.findall(r"linear:\s+x: ([0-9.\-]+)\s+y: ([0-9.\-]+)", feedback_log)
+motor_samples = re.findall(r"left_speed_percent: ([0-9.\-]+)\s+right_speed_percent: ([0-9.\-]+)", motor_log)
+tick_samples = re.findall(r"left_ticks: (\d+)\s+right_ticks: (\d+)", encoder_log)
+feedback_samples = re.findall(
+    r"left_velocity_ticks_per_sec: ([0-9.\-]+)\s+right_velocity_ticks_per_sec: ([0-9.\-]+)",
+    encoder_log,
+)
 
 print("Motor summary:")
 if motor_samples:
-    non_zero = [(float(left), float(right)) for left, right in motor_samples if float(left) != 0.0 or float(right) != 0.0]
+    non_zero = [sample for sample in motor_samples if sample != ("0.0", "0.0")]
     print(f"  samples={len(motor_samples)} non_zero_samples={len(non_zero)}")
     if non_zero:
         print(f"  first_non_zero={non_zero[0][0]}/{non_zero[0][1]}")
@@ -130,19 +140,29 @@ if motor_samples:
 else:
     print("  no motor samples captured")
 
-print("Feedback summary:")
+print("Encoder summary:")
+if tick_samples:
+    start_left, start_right = map(int, tick_samples[0])
+    end_left, end_right = map(int, tick_samples[-1])
+    print(f"  start_ticks={start_left}/{start_right}")
+    print(f"  end_ticks={end_left}/{end_right}")
+    print(f"  delta_ticks={end_left - start_left}/{end_right - start_right}")
+else:
+    print("  no encoder tick samples captured")
+
 if feedback_samples:
     non_zero = [(float(left), float(right)) for left, right in feedback_samples if float(left) != 0.0 or float(right) != 0.0]
-    print(f"  samples={len(feedback_samples)} non_zero_samples={len(non_zero)}")
+    print(f"  non_zero_velocity_samples={len(non_zero)}")
     if non_zero:
         max_left = max(sample[0] for sample in non_zero)
         max_right = max(sample[1] for sample in non_zero)
         print(f"  max_velocity={max_left}/{max_right}")
 else:
-    print("  no feedback samples captured")
+    print("  no encoder velocity samples captured")
 
 print("Controller summary:")
 print(f"  cmd_vel_samples={count_blocks(cmd_vel_log)}")
+print(f"  cmd_vel_out_samples={count_blocks(cmd_vel_out_log)}")
 PY
 
 echo
@@ -152,11 +172,14 @@ echo
 echo "Motor log:"
 cat "${motor_log}"
 echo
-echo "Feedback log:"
-cat "${feedback_log}"
+echo "Encoder log:"
+cat "${encoder_log}"
 echo
 echo "cmd_vel log:"
 cat "${cmd_vel_log}"
+echo
+echo "cmd_vel_out log:"
+cat "${cmd_vel_out_log}"
 REMOTE
 
 echo

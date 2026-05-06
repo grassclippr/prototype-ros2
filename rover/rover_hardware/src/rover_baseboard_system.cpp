@@ -14,9 +14,12 @@ namespace rover_hardware {
 namespace {
 
 constexpr size_t kExpectedJointCount = 2;
-constexpr char kWheelCommandTopic[] = "/wheel_cmd";
-constexpr char kWheelVelocityTopic[] = "/wheel_velocities";
+constexpr char kMotorCommandTopic[] = "/baseboard/motor_command";
+constexpr char kEncoderStateTopic[] = "/baseboard/encoder_state";
+constexpr char kSafetyStateTopic[] = "/baseboard/safety_state";
 constexpr double kDefaultWheelRadiusMeters = 0.127;
+constexpr double kDefaultTicksPerMeter = 150.0;
+constexpr double kDefaultMaxTicksPerSecond = 30.0;
 constexpr double kDefaultFeedbackTimeoutSec = 0.25;
 
 bool loadPositiveDoubleParameter(
@@ -67,6 +70,21 @@ hardware_interface::CallbackReturn RoverBaseboardSystem::on_init(
         return hardware_interface::CallbackReturn::ERROR;
     }
 
+    if (!loadPositiveDoubleParameter(info_, "ticks_per_meter", kDefaultTicksPerMeter, ticks_per_meter_)) {
+        RCLCPP_ERROR(rclcpp::get_logger("RoverBaseboardSystem"),
+                     "Invalid ticks_per_meter: %.6f",
+                     ticks_per_meter_);
+        return hardware_interface::CallbackReturn::ERROR;
+    }
+
+    if (!loadPositiveDoubleParameter(
+            info_, "max_ticks_per_second", kDefaultMaxTicksPerSecond, max_ticks_per_second_)) {
+        RCLCPP_ERROR(rclcpp::get_logger("RoverBaseboardSystem"),
+                     "Invalid max_ticks_per_second: %.6f",
+                     max_ticks_per_second_);
+        return hardware_interface::CallbackReturn::ERROR;
+    }
+
     if (!loadPositiveDoubleParameter(
             info_, "feedback_timeout_sec", kDefaultFeedbackTimeoutSec, feedback_timeout_sec_)) {
         RCLCPP_ERROR(rclcpp::get_logger("RoverBaseboardSystem"),
@@ -76,13 +94,19 @@ hardware_interface::CallbackReturn RoverBaseboardSystem::on_init(
     }
 
     node_ = std::make_shared<rclcpp::Node>("rover_baseboard_system");
-    wheel_command_pub_ = node_->create_publisher<geometry_msgs::msg::Twist>(
-        kWheelCommandTopic, rclcpp::QoS(rclcpp::KeepLast(1)).best_effort());
-    wheel_velocity_sub_ = node_->create_subscription<geometry_msgs::msg::Twist>(
-        kWheelVelocityTopic,
+    wheel_command_pub_ = node_->create_publisher<rover_baseboard_msgs::msg::MotorCommand>(
+        kMotorCommandTopic, rclcpp::QoS(rclcpp::KeepLast(1)).best_effort());
+    encoder_state_sub_ = node_->create_subscription<rover_baseboard_msgs::msg::EncoderState>(
+        kEncoderStateTopic,
         rclcpp::SensorDataQoS(),
-        [this](geometry_msgs::msg::Twist::SharedPtr msg) {
-            wheelVelocityCallback(std::move(msg));
+        [this](rover_baseboard_msgs::msg::EncoderState::SharedPtr msg) {
+            encoderStateCallback(std::move(msg));
+        });
+    safety_state_sub_ = node_->create_subscription<rover_baseboard_msgs::msg::SafetyState>(
+        kSafetyStateTopic,
+        rclcpp::SensorDataQoS(),
+        [this](rover_baseboard_msgs::msg::SafetyState::SharedPtr msg) {
+            safetyStateCallback(std::move(msg));
         });
 
     return hardware_interface::CallbackReturn::SUCCESS;
@@ -168,9 +192,9 @@ hardware_interface::return_type RoverBaseboardSystem::write(const rclcpp::Time &
     return hardware_interface::return_type::OK;
 }
 
-void RoverBaseboardSystem::wheelVelocityCallback(const geometry_msgs::msg::Twist::SharedPtr msg) {
-    const double left_linear_mps = msg->linear.y;
-    const double right_linear_mps = msg->linear.z;
+void RoverBaseboardSystem::encoderStateCallback(const rover_baseboard_msgs::msg::EncoderState::SharedPtr msg) {
+    const double left_linear_mps = msg->left_velocity_ticks_per_sec / ticks_per_meter_;
+    const double right_linear_mps = msg->right_velocity_ticks_per_sec / ticks_per_meter_;
     if (!std::isfinite(left_linear_mps) || !std::isfinite(right_linear_mps)) {
         RCLCPP_WARN_THROTTLE(node_->get_logger(),
                              *node_->get_clock(),
@@ -192,18 +216,37 @@ void RoverBaseboardSystem::wheelVelocityCallback(const geometry_msgs::msg::Twist
     have_feedback_ = true;
 }
 
+void RoverBaseboardSystem::safetyStateCallback(const rover_baseboard_msgs::msg::SafetyState::SharedPtr msg) {
+    if (msg->interlock_triggered && !safety_interlock_triggered_) {
+        RCLCPP_WARN(node_->get_logger(), "Baseboard safety interlock triggered");
+    } else if (!msg->interlock_triggered && safety_interlock_triggered_) {
+        RCLCPP_INFO(node_->get_logger(), "Baseboard safety interlock released");
+    }
+    safety_interlock_triggered_ = msg->interlock_triggered;
+}
+
 void RoverBaseboardSystem::publishWheelCommand() {
     if (!wheel_command_pub_) {
         return;
     }
 
-    geometry_msgs::msg::Twist msg;
+    const auto to_percent = [this](double joint_rad_per_sec) {
+        if (!std::isfinite(joint_rad_per_sec)) {
+            return 0.0;
+        }
+        const double linear_mps = joint_rad_per_sec * wheel_radius_;
+        const double ticks_per_second = linear_mps * ticks_per_meter_;
+        return std::clamp(100.0 * ticks_per_second / max_ticks_per_second_, -100.0, 100.0);
+    };
+
+    rover_baseboard_msgs::msg::MotorCommand msg;
     if (!wheel_commands_.empty()) {
-        msg.linear.x = wheel_commands_[0];
+        msg.left_speed_percent = to_percent(wheel_commands_[0]);
     }
     if (wheel_commands_.size() > 1) {
-        msg.linear.y = wheel_commands_[1];
+        msg.right_speed_percent = to_percent(wheel_commands_[1]);
     }
+    msg.timeout_ms = 500;
     wheel_command_pub_->publish(msg);
 }
 

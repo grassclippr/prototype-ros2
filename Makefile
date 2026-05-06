@@ -5,7 +5,7 @@ export
 
 PIO_PROJECT := rover/baseboard
 PIO_ENV := LynxAdapter_v1_0
-MICROROS_HEADER_MARKER := $(PIO_PROJECT)/.pio/libdeps/$(PIO_ENV)/micro_ros_platformio/libmicroros/include/nmea_msgs/msg/sentence.h
+MICROROS_HEADER_MARKER := $(PIO_PROJECT)/.pio/libdeps/$(PIO_ENV)/micro_ros_platformio/libmicroros/include/rover_baseboard_msgs/msg/motor_command.h
 
 SERIAL_DEV ?= $(shell ./scripts/resolve_serial_dev.sh)
 UPLOAD_PORT ?= $(SERIAL_DEV)
@@ -73,7 +73,11 @@ pi-rollback:
 baseboard-build: $(MICROROS_HEADER_MARKER)
 	@source ~/.platformio/penv/bin/activate && pio run -d $(PIO_PROJECT) -e $(PIO_ENV)
 
-$(MICROROS_HEADER_MARKER): $(PIO_PROJECT)/extra_packages/nmea_msgs/msg/Sentence.msg
+$(MICROROS_HEADER_MARKER): \
+	$(PIO_PROJECT)/extra_packages/nmea_msgs/msg/Sentence.msg \
+	$(PIO_PROJECT)/extra_packages/rover_baseboard_msgs/msg/EncoderState.msg \
+	$(PIO_PROJECT)/extra_packages/rover_baseboard_msgs/msg/MotorCommand.msg \
+	$(PIO_PROJECT)/extra_packages/rover_baseboard_msgs/msg/SafetyState.msg
 	@echo "micro-ROS headers missing or outdated. Triggering build..."
 	@source ~/.platformio/penv/bin/activate && pio run -d $(PIO_PROJECT) -e $(PIO_ENV)
 
@@ -234,7 +238,7 @@ esp32-verify-build-flash: podman-stop-proxy cppcheck-baseboard
 .PHONY: podman-core-rebuild-msgs
 podman-core-rebuild-msgs:
 	@echo "Rebuilding ROS wheel-control packages in core container..."
-	@podman exec core bash -lc 'source /opt/ros/jazzy/setup.bash && cd /root/ros2_ws && colcon build --packages-select rover_hardware rover_description rover_navigation' 2>&1
+	@podman exec core bash -lc 'source /opt/ros/jazzy/setup.bash && cd /root/ros2_ws && colcon build --packages-select rover_baseboard_msgs rover_hardware rover_description rover_navigation' 2>&1
 
 .PHONY: e2e
 e2e: flash

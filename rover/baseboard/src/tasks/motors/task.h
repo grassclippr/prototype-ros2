@@ -8,13 +8,12 @@
 #include "driver/pcnt.h"
 
 // --- Configurable encoder / control constants ---
-constexpr float TICKS_PER_METER       = 150.0f;   // ~3 ticks ≈ 2cm → calibrate!
-constexpr float TRACK_WIDTH_METERS    = 0.66f;
-constexpr float PI_KP                 = 0.2f;
-constexpr float PI_KI                 = 0.5f;
-constexpr float PI_INTEGRAL_LIMIT     = 1.0f;
-constexpr float CONTROL_PERIOD_S      = 0.01f;     // 10ms task period
-constexpr size_t VEL_AVG_WINDOW       = 10;         // 100ms averaging window
+constexpr float MAX_MOTOR_TICKS_PER_SECOND = 30.0f;
+constexpr float PI_KP                      = 0.2f;
+constexpr float PI_KI                      = 0.5f;
+constexpr float PI_INTEGRAL_LIMIT          = 1.0f;
+constexpr float CONTROL_PERIOD_S           = 0.01f;  // 10ms task period
+constexpr size_t VEL_AVG_WINDOW            = 10;     // 100ms averaging window
 
 template <size_t N>
 struct MovingAverage {
@@ -45,8 +44,8 @@ struct MovingAverage {
 class MotorControl {
    public:
     struct Command {
-        float left_wheel_angular_velocity = 0.0f;
-        float right_wheel_angular_velocity = 0.0f;
+        float left_speed_percent = 0.0f;
+        float right_speed_percent = 0.0f;
         uint32_t seq = 0;
         uint32_t timeout_ms = 0;
         uint32_t last_update_ms = 0;
@@ -55,14 +54,21 @@ class MotorControl {
 
     struct WheelState {
         int64_t ticks        = 0;     // absolute accumulated ticks (signed)
-        float   velocity_mps = 0.0f;  // filtered velocity in m/s (signed)
+        float   velocity_ticks_per_sec = 0.0f;  // filtered velocity in ticks/s (signed)
+    };
+
+    struct SafetyState {
+        bool interlock_triggered = false;
+        bool lift_triggered = false;
+        bool bumper_one_wire_triggered = false;
+        bool bumper_uart_fault_triggered = false;
     };
 
     void setup();
     static void task(void *arg);
     void setWheelCommand(
-        float left_wheel_angular_velocity,
-        float right_wheel_angular_velocity,
+        float left_speed_percent,
+        float right_speed_percent,
         uint32_t seq,
         uint32_t timeout_ms);
     void stop();
@@ -70,6 +76,7 @@ class MotorControl {
     Command getCommand() const;
     WheelState getLeftWheel() const { return left_wheel_; }
     WheelState getRightWheel() const { return right_wheel_; }
+    SafetyState getSafetyState();
 
    private:
     // PI controller state
@@ -84,8 +91,8 @@ class MotorControl {
     bool safetyTriggered();
 
     // Command state
-    volatile float left_wheel_angular_velocity_ = 0.0f;
-    volatile float right_wheel_angular_velocity_ = 0.0f;
+    volatile float left_speed_percent_ = 0.0f;
+    volatile float right_speed_percent_ = 0.0f;
     volatile uint32_t seq_ = 0;
     volatile uint32_t timeout_ms_ = 0;
     volatile uint32_t last_update_ms_ = 0;
@@ -111,6 +118,9 @@ class MotorControl {
     PiState right_pi_;
     bool safety_triggered_ = false;
     bool safety_raw_triggered_ = false;
+    bool lift_triggered_ = false;
+    bool bumper_one_wire_triggered_ = false;
+    bool bumper_uart_fault_triggered_ = false;
     uint32_t safety_raw_changed_ms_ = 0;
 };
 

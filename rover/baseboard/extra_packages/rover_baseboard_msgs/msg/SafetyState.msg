@@ -1,0 +1,4 @@
+bool interlock_triggered
+bool lift_triggered
+bool bumper_one_wire_triggered
+bool bumper_uart_fault_triggered

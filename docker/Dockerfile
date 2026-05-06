@@ -54,11 +54,13 @@ RUN mkdir -p /etc/udev/rules.d && \
     mkdir -p ${ROS_WS}/src/rover/rover_description && \
     mkdir -p ${ROS_WS}/src/rover/rover_hardware && \
     mkdir -p ${ROS_WS}/src/rover/rover_navigation && \
+    mkdir -p ${ROS_WS}/src/rover/baseboard/extra_packages/rover_baseboard_msgs && \
     mkdir -p ${ROS_WS}/src/rover/baseboard/extra_packages/nmea_msgs
 
 COPY rover/rover_description/package.xml ${ROS_WS}/src/rover/rover_description/package.xml
 COPY rover/rover_hardware/package.xml ${ROS_WS}/src/rover/rover_hardware/package.xml
 COPY rover/rover_navigation/package.xml ${ROS_WS}/src/rover/rover_navigation/package.xml
+COPY rover/baseboard/extra_packages/rover_baseboard_msgs/package.xml ${ROS_WS}/src/rover/baseboard/extra_packages/rover_baseboard_msgs/package.xml
 COPY rover/baseboard/extra_packages/nmea_msgs/package.xml ${ROS_WS}/src/rover/baseboard/extra_packages/nmea_msgs/package.xml
 
 # Copy configuration files from docker directory
@@ -72,9 +74,14 @@ WORKDIR /root
 
 RUN /bin/bash -lc "source /opt/ros/${ROS_DISTRO}/setup.bash && cd ${ROS_WS} && apt-get update && rosdep install -i --from-path src --rosdistro ${ROS_DISTRO} -y && rm -rf /var/lib/apt/lists/*"
 
-# Copy the entire project into the container after dependency resolution so
-# source-only edits can reuse the rosdep layer.
-COPY rover ${ROS_WS}/src/rover
+# Copy only the ROS 2 workspace content needed by the core image. Keeping the
+# ESP32 firmware tree out of this layer prevents firmware-only edits from
+# invalidating the container workspace build.
+COPY rover/rover_description ${ROS_WS}/src/rover/rover_description
+COPY rover/rover_hardware ${ROS_WS}/src/rover/rover_hardware
+COPY rover/rover_navigation ${ROS_WS}/src/rover/rover_navigation
+COPY rover/baseboard/extra_packages/rover_baseboard_msgs ${ROS_WS}/src/rover/baseboard/extra_packages/rover_baseboard_msgs
+COPY rover/baseboard/extra_packages/nmea_msgs ${ROS_WS}/src/rover/baseboard/extra_packages/nmea_msgs
 
 RUN ROS_SKIP_DEP_INSTALL=1 ROS_SKIP_ROSDEP_UPDATE=1 ./workspace.sh
 

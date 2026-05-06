@@ -1,8 +1,10 @@
 #pragma once
 #include <Arduino.h>
 #include <esp_now.h>
-#include <geometry_msgs/msg/twist.h>
 #include <nmea_msgs/msg/sentence.h>
+#include <rover_baseboard_msgs/msg/encoder_state.h>
+#include <rover_baseboard_msgs/msg/motor_command.h>
+#include <rover_baseboard_msgs/msg/safety_state.h>
 #include <std_msgs/msg/int32.h>
 
 #include "tasks/leds/task.h"
@@ -38,15 +40,20 @@ class Rover {
     rcl_publisher_t nmea_publisher = rcl_get_zero_initialized_publisher();
     nmea_msgs__msg__Sentence nmea_msg;
 
-    rcl_subscription_t wheel_cmd_sub = rcl_get_zero_initialized_subscription();
-    geometry_msgs__msg__Twist wheel_cmd_msg;
+    rcl_subscription_t motor_command_sub = rcl_get_zero_initialized_subscription();
+    rover_baseboard_msgs__msg__MotorCommand motor_command_msg;
 
-    // Wheel velocity publisher (measured from encoders)
-    rcl_timer_t odom_vel_timer = rcl_get_zero_initialized_timer();
-    rcl_publisher_t odom_vel_publisher = rcl_get_zero_initialized_publisher();
-    geometry_msgs__msg__Twist odom_vel_msg;
-    bool odom_vel_publisher_initialized = false;
-    bool odom_vel_timer_initialized = false;
+    rcl_timer_t encoder_state_timer = rcl_get_zero_initialized_timer();
+    rcl_publisher_t encoder_state_publisher = rcl_get_zero_initialized_publisher();
+    rover_baseboard_msgs__msg__EncoderState encoder_state_msg;
+    bool encoder_state_publisher_initialized = false;
+    bool encoder_state_timer_initialized = false;
+
+    rcl_timer_t safety_state_timer = rcl_get_zero_initialized_timer();
+    rcl_publisher_t safety_state_publisher = rcl_get_zero_initialized_publisher();
+    rover_baseboard_msgs__msg__SafetyState safety_state_msg;
+    bool safety_state_publisher_initialized = false;
+    bool safety_state_timer_initialized = false;
 
     // ESP-NOW communication
     void onEspNowRecv(const uint8_t *mac_addr, const uint8_t *data, size_t len);
@@ -57,7 +64,9 @@ class Rover {
     bool paired = false;
     bool baseboard_publisher_initialized = false;
     bool nmea_publisher_initialized = false;
-    bool wheel_cmd_msg_initialized = false;
-    bool wheel_cmd_sub_initialized = false;
+    bool motor_command_msg_initialized = false;
+    bool motor_command_sub_initialized = false;
+    bool encoder_state_msg_initialized = false;
+    bool safety_state_msg_initialized = false;
     bool timer_initialized = false;
 };

@@ -191,14 +191,14 @@ Rover::Rover() {
         msg.data = 0;
         publisher = rcl_get_zero_initialized_publisher();
         nmea_publisher = rcl_get_zero_initialized_publisher();
-        wheel_cmd_sub = rcl_get_zero_initialized_subscription();
+        motor_command_sub = rcl_get_zero_initialized_subscription();
         // Use a fixed-size message type here so micro-ROS can deserialize wheel
         // commands without dynamic allocation on the MCU.
-        if (!geometry_msgs__msg__Twist__init(&wheel_cmd_msg)) {
-            printf("Failed to initialize wheel command message buffer\n");
+        if (!rover_baseboard_msgs__msg__MotorCommand__init(&motor_command_msg)) {
+            printf("Failed to initialize motor command message buffer\n");
             return false;
         }
-        wheel_cmd_msg_initialized = true;
+        motor_command_msg_initialized = true;
 
         rcl_ret_t rc = RCL_RET_ERROR;
         rmw_qos_profile_t baseboard_qos = rmw_qos_profile_sensor_data;
@@ -234,33 +234,33 @@ Rover::Rover() {
         // session settle.
         constexpr int kMaxSubRetries = 3;
         constexpr int kSubRetryDelayMs = 500;
-        rmw_qos_profile_t wheel_cmd_qos = rmw_qos_profile_default;
-        wheel_cmd_qos.history = RMW_QOS_POLICY_HISTORY_KEEP_LAST;
-        wheel_cmd_qos.depth = 1;
-        wheel_cmd_qos.reliability = RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT;
-        wheel_cmd_qos.durability = RMW_QOS_POLICY_DURABILITY_VOLATILE;
+        rmw_qos_profile_t motor_command_qos = rmw_qos_profile_default;
+        motor_command_qos.history = RMW_QOS_POLICY_HISTORY_KEEP_LAST;
+        motor_command_qos.depth = 1;
+        motor_command_qos.reliability = RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT;
+        motor_command_qos.durability = RMW_QOS_POLICY_DURABILITY_VOLATILE;
         rc = RCL_RET_ERROR;
         for (int attempt = 1; attempt <= kMaxSubRetries; ++attempt) {
             if (attempt > 1) {
                 delay(kSubRetryDelayMs);
                 rcl_reset_error();
-                wheel_cmd_sub = rcl_get_zero_initialized_subscription();
+                motor_command_sub = rcl_get_zero_initialized_subscription();
             }
             rc = rclc_subscription_init(
-                &wheel_cmd_sub,
+                &motor_command_sub,
                 node,
-                ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-                "/wheel_cmd",
-                &wheel_cmd_qos);
+                ROSIDL_GET_MSG_TYPE_SUPPORT(rover_baseboard_msgs, msg, MotorCommand),
+                "/baseboard/motor_command",
+                &motor_command_qos);
             if (rc == RCL_RET_OK) {
                 break;
             }
-            log_rcl_error("wheel_cmd subscription init", rc);
+            log_rcl_error("motor_command subscription init", rc);
         }
         if (rc != RCL_RET_OK) {
             return false;
         }
-        wheel_cmd_sub_initialized = true;
+        motor_command_sub_initialized = true;
 
         const uint32_t timer_timeout = BASEBOARD_HEARTBEAT_MS;
         rc = rclc_timer_init_default2(
@@ -289,28 +289,47 @@ Rover::Rover() {
         }
         timer_initialized = true;
 
-        // Wheel velocity publisher (measured from encoders)
-        odom_vel_publisher = rcl_get_zero_initialized_publisher();
-        geometry_msgs__msg__Twist__init(&odom_vel_msg);
+        // Encoder state publisher
+        encoder_state_publisher = rcl_get_zero_initialized_publisher();
+        rover_baseboard_msgs__msg__EncoderState__init(&encoder_state_msg);
+        encoder_state_msg_initialized = true;
         rmw_qos_profile_t wheel_feedback_qos = rmw_qos_profile_sensor_data;
         wheel_feedback_qos.history = RMW_QOS_POLICY_HISTORY_KEEP_LAST;
         wheel_feedback_qos.depth = 1;
         rc = rclc_publisher_init(
-            &odom_vel_publisher,
+            &encoder_state_publisher,
             node,
-            ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-            "/wheel_velocities",
+            ROSIDL_GET_MSG_TYPE_SUPPORT(rover_baseboard_msgs, msg, EncoderState),
+            "/baseboard/encoder_state",
             &wheel_feedback_qos);
         if (rc != RCL_RET_OK) {
-            log_rcl_error("odom_vel publisher init", rc);
+            log_rcl_error("encoder_state publisher init", rc);
             return false;
         }
-        odom_vel_publisher_initialized = true;
+        encoder_state_publisher_initialized = true;
+
+        safety_state_publisher = rcl_get_zero_initialized_publisher();
+        rover_baseboard_msgs__msg__SafetyState__init(&safety_state_msg);
+        safety_state_msg_initialized = true;
+        rmw_qos_profile_t safety_state_qos = rmw_qos_profile_sensor_data;
+        safety_state_qos.history = RMW_QOS_POLICY_HISTORY_KEEP_LAST;
+        safety_state_qos.depth = 1;
+        rc = rclc_publisher_init(
+            &safety_state_publisher,
+            node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(rover_baseboard_msgs, msg, SafetyState),
+            "/baseboard/safety_state",
+            &safety_state_qos);
+        if (rc != RCL_RET_OK) {
+            log_rcl_error("safety_state publisher init", rc);
+            return false;
+        }
+        safety_state_publisher_initialized = true;
 
         // 20 Hz timer to publish encoder feedback
-        odom_vel_timer = rcl_get_zero_initialized_timer();
+        encoder_state_timer = rcl_get_zero_initialized_timer();
         rc = rclc_timer_init_default2(
-            &odom_vel_timer,
+            &encoder_state_timer,
             support,
             RCL_MS_TO_NS(50),  // 50ms = 20Hz
             [](rcl_timer_t *timer, int64_t last_call_time) {
@@ -319,49 +338,81 @@ Rover::Rover() {
                 auto left  = selfRover->motors.getLeftWheel();
                 auto right = selfRover->motors.getRightWheel();
 
-                selfRover->odom_vel_msg.linear.x = (left.velocity_mps + right.velocity_mps) * 0.5;
-                selfRover->odom_vel_msg.angular.z = (right.velocity_mps - left.velocity_mps) / TRACK_WIDTH_METERS;
-                selfRover->odom_vel_msg.linear.y = left.velocity_mps;   // per-wheel debug
-                selfRover->odom_vel_msg.linear.z = right.velocity_mps;  // per-wheel debug
-                selfRover->odom_vel_msg.angular.x = 0.0f;
-                selfRover->odom_vel_msg.angular.y = 0.0f;
+                selfRover->encoder_state_msg.left_ticks = left.ticks;
+                selfRover->encoder_state_msg.right_ticks = right.ticks;
+                selfRover->encoder_state_msg.left_velocity_ticks_per_sec = left.velocity_ticks_per_sec;
+                selfRover->encoder_state_msg.right_velocity_ticks_per_sec = right.velocity_ticks_per_sec;
 
                 static uint8_t consecutive_failures = 0;
                 static uint32_t last_error_log_ms = 0;
                 (void)publishWithReconnect(
-                    &selfRover->odom_vel_publisher,
-                    &selfRover->odom_vel_msg,
-                    "wheel velocity publisher",
+                    &selfRover->encoder_state_publisher,
+                    &selfRover->encoder_state_msg,
+                    "encoder state publisher",
                     WHEEL_VELOCITY_FAILURES_BEFORE_RECONNECT,
                     consecutive_failures,
                     last_error_log_ms);
             },
             true);
         if (rc != RCL_RET_OK) {
-            log_rcl_error("odom_vel timer init", rc);
+            log_rcl_error("encoder_state timer init", rc);
             return false;
         }
-        odom_vel_timer_initialized = true;
+        encoder_state_timer_initialized = true;
+
+        safety_state_timer = rcl_get_zero_initialized_timer();
+        rc = rclc_timer_init_default2(
+            &safety_state_timer,
+            support,
+            RCL_MS_TO_NS(100),  // 100ms = 10Hz
+            [](rcl_timer_t *timer, int64_t last_call_time) {
+                (void)timer;
+                (void)last_call_time;
+                auto state = selfRover->motors.getSafetyState();
+                selfRover->safety_state_msg.interlock_triggered = state.interlock_triggered;
+                selfRover->safety_state_msg.lift_triggered = state.lift_triggered;
+                selfRover->safety_state_msg.bumper_one_wire_triggered = state.bumper_one_wire_triggered;
+                selfRover->safety_state_msg.bumper_uart_fault_triggered = state.bumper_uart_fault_triggered;
+
+                static uint8_t consecutive_failures = 0;
+                static uint32_t last_error_log_ms = 0;
+                (void)publishWithReconnect(
+                    &selfRover->safety_state_publisher,
+                    &selfRover->safety_state_msg,
+                    "safety state publisher",
+                    WHEEL_VELOCITY_FAILURES_BEFORE_RECONNECT,
+                    consecutive_failures,
+                    last_error_log_ms);
+            },
+            true);
+        if (rc != RCL_RET_OK) {
+            log_rcl_error("safety_state timer init", rc);
+            return false;
+        }
+        safety_state_timer_initialized = true;
 
         return true;
     });
-    uros_client.onExecutorInit(3, [&](rclc_executor_t *executor) {
+    uros_client.onExecutorInit(4, [&](rclc_executor_t *executor) {
         RCCHECK(rclc_executor_add_timer(executor, &timer));
-        RCCHECK(rclc_executor_add_timer(executor, &odom_vel_timer));
+        RCCHECK(rclc_executor_add_timer(executor, &encoder_state_timer));
+        RCCHECK(rclc_executor_add_timer(executor, &safety_state_timer));
         RCCHECK(rclc_executor_add_subscription(
             executor,
-            &wheel_cmd_sub,
-            &wheel_cmd_msg,
+            &motor_command_sub,
+            &motor_command_msg,
             [](const void *msgin) -> void {
-                auto *wheel_cmd = static_cast<const geometry_msgs__msg__Twist *>(msgin);
-                const float left = wheel_cmd->linear.x;
-                const float right = wheel_cmd->linear.y;
+                auto *command = static_cast<const rover_baseboard_msgs__msg__MotorCommand *>(msgin);
+                const float left = command->left_speed_percent;
+                const float right = command->right_speed_percent;
                 if (!std::isfinite(left) || !std::isfinite(right)) {
-                    printf("Rejected wheel_cmd: non-finite velocity\n");
+                    printf("Rejected motor_command: non-finite speed percent\n");
                     return;
                 }
 
-                selfRover->motors.setWheelCommand(left, right, 0, WHEEL_CMD_TIMEOUT_MS);
+                const uint32_t timeout_ms =
+                    command->timeout_ms > 0 ? command->timeout_ms : WHEEL_CMD_TIMEOUT_MS;
+                selfRover->motors.setWheelCommand(left, right, 0, timeout_ms);
             },
             ON_NEW_DATA));
         return true;
@@ -384,22 +435,37 @@ Rover::Rover() {
             nmea_publisher_initialized = false;
         }
 #endif
-        if (wheel_cmd_sub_initialized) {
-            RCSOFTCHECK(rcl_subscription_fini(&wheel_cmd_sub, node));
-            wheel_cmd_sub_initialized = false;
+        if (motor_command_sub_initialized) {
+            RCSOFTCHECK(rcl_subscription_fini(&motor_command_sub, node));
+            motor_command_sub_initialized = false;
         }
-        if (wheel_cmd_msg_initialized) {
-            geometry_msgs__msg__Twist__fini(&wheel_cmd_msg);
-            wheel_cmd_msg_initialized = false;
+        if (motor_command_msg_initialized) {
+            rover_baseboard_msgs__msg__MotorCommand__fini(&motor_command_msg);
+            motor_command_msg_initialized = false;
         }
-        if (odom_vel_timer_initialized) {
-            RCSOFTCHECK(rcl_timer_fini(&odom_vel_timer));
-            odom_vel_timer_initialized = false;
+        if (encoder_state_timer_initialized) {
+            RCSOFTCHECK(rcl_timer_fini(&encoder_state_timer));
+            encoder_state_timer_initialized = false;
         }
-        if (odom_vel_publisher_initialized) {
-            RCSOFTCHECK(rcl_publisher_fini(&odom_vel_publisher, node));
-            geometry_msgs__msg__Twist__fini(&odom_vel_msg);
-            odom_vel_publisher_initialized = false;
+        if (encoder_state_publisher_initialized) {
+            RCSOFTCHECK(rcl_publisher_fini(&encoder_state_publisher, node));
+            encoder_state_publisher_initialized = false;
+        }
+        if (encoder_state_msg_initialized) {
+            rover_baseboard_msgs__msg__EncoderState__fini(&encoder_state_msg);
+            encoder_state_msg_initialized = false;
+        }
+        if (safety_state_timer_initialized) {
+            RCSOFTCHECK(rcl_timer_fini(&safety_state_timer));
+            safety_state_timer_initialized = false;
+        }
+        if (safety_state_publisher_initialized) {
+            RCSOFTCHECK(rcl_publisher_fini(&safety_state_publisher, node));
+            safety_state_publisher_initialized = false;
+        }
+        if (safety_state_msg_initialized) {
+            rover_baseboard_msgs__msg__SafetyState__fini(&safety_state_msg);
+            safety_state_msg_initialized = false;
         }
     });
 

@@ -154,12 +154,12 @@ else
 fi
 
 echo "========================================="
-echo "Verifying /wheel_velocities topic..."
+echo "Verifying /baseboard/encoder_state topic..."
 echo "========================================="
-if wait_for_pattern_in_command 30 'linear:' "${COMPOSE_CMD} exec -T core bash -lc 'source /opt/ros/jazzy/setup.bash && ros2 topic echo /wheel_velocities --once --timeout 20'"; then
-    echo "✅ /wheel_velocities data received."
+if wait_for_pattern_in_command 30 'left_ticks:' "${COMPOSE_CMD} exec -T core bash -lc 'source /opt/ros/jazzy/setup.bash && ros2 topic echo /baseboard/encoder_state --once --timeout 20'"; then
+    echo "✅ /baseboard/encoder_state data received."
 else
-    echo "⚠️  /wheel_velocities not received (may require motor encoders). Continuing."
+    echo "⚠️  /baseboard/encoder_state not received (may require motor encoders). Continuing."
 fi
 
 echo "========================================="
