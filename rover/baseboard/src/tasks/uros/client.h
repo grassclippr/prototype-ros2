@@ -84,6 +84,8 @@ class UrosClient {
     bool node_initialized = false;
     bool executor_initialized = false;
     uint32_t last_ping_ms = 0;
+    uint32_t last_ping_failure_log_ms = 0;
+    uint8_t consecutive_ping_failures = 0;
 };
 
 #endif  // UROS_CLIENT_H

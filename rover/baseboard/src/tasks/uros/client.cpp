@@ -94,6 +94,10 @@ void UrosClient::requestReconnect(const char *reason) {
 #define SERIAL_MUX_SKIP_PING 0
 #endif
 
+namespace {
+constexpr uint8_t kConnectedPingFailuresBeforeReconnect = 3;
+}
+
 bool UrosClient::create_entities() {
     allocator = rcl_get_default_allocator();
 
@@ -244,8 +248,27 @@ void UrosClient::urosTask(void *arg) {
                     self->last_ping_ms = millis();
                     rcl_ret_t ping_rc = rmw_uros_ping_agent(100, 1);
                     if (ping_rc != RMW_RET_OK) {
-                        self->state = AGENT_DISCONNECTED;
-                        break;
+                        self->consecutive_ping_failures++;
+                        const uint32_t now_ms = millis();
+                        if (now_ms - self->last_ping_failure_log_ms >= 1000) {
+                            printf(
+                                "uros ping failed (rc=%d, consecutive=%u/%u)\n",
+                                static_cast<int>(ping_rc),
+                                static_cast<unsigned>(self->consecutive_ping_failures),
+                                static_cast<unsigned>(kConnectedPingFailuresBeforeReconnect));
+                            self->last_ping_failure_log_ms = now_ms;
+                        }
+                        if (self->consecutive_ping_failures >= kConnectedPingFailuresBeforeReconnect) {
+                            printf("uros ping failure threshold reached; disconnecting\n");
+                            self->consecutive_ping_failures = 0;
+                            self->state = AGENT_DISCONNECTED;
+                            break;
+                        }
+                    } else if (self->consecutive_ping_failures != 0) {
+                        printf(
+                            "uros ping recovered after %u failure(s)\n",
+                            static_cast<unsigned>(self->consecutive_ping_failures));
+                        self->consecutive_ping_failures = 0;
                     }
                 }
                 rclc_executor_spin_some(&self->executor, RCL_MS_TO_NS(10));

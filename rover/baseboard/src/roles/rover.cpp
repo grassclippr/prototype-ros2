@@ -28,7 +28,8 @@ static Rover *selfRover = nullptr;
 
 namespace {
 constexpr uint32_t BASEBOARD_HEARTBEAT_MS = 5000;
-constexpr uint8_t PUBLISH_FAILURES_BEFORE_RECONNECT = 2;
+constexpr uint8_t BASEBOARD_FAILURES_BEFORE_RECONNECT = 0;
+constexpr uint8_t WHEEL_VELOCITY_FAILURES_BEFORE_RECONNECT = 20;
 
 bool waitForSerialBytes(HardwareSerial &serial, size_t count, uint32_t timeout_ms) {
     const unsigned long deadline = millis() + timeout_ms;
@@ -95,6 +96,7 @@ bool publishWithReconnect(
     rcl_publisher_t *publisher,
     const void *ros_message,
     const char *publisher_name,
+    uint8_t failures_before_reconnect,
     uint8_t &consecutive_failures,
     uint32_t &last_error_log_ms)
 {
@@ -105,6 +107,11 @@ bool publishWithReconnect(
 
     const rcl_ret_t rc = rcl_publish(publisher, ros_message, NULL);
     if (rc == RCL_RET_OK) {
+        if (consecutive_failures > 0) {
+            printf("%s recovered after %u publish failure(s)\n",
+                   publisher_name,
+                   static_cast<unsigned>(consecutive_failures));
+        }
         consecutive_failures = 0;
         return true;
     }
@@ -118,7 +125,10 @@ bool publishWithReconnect(
                    static_cast<unsigned>(consecutive_failures));
         last_error_log_ms = now_ms;
     }
-    if (consecutive_failures >= PUBLISH_FAILURES_BEFORE_RECONNECT) {
+    if (failures_before_reconnect > 0 && consecutive_failures >= failures_before_reconnect) {
+        printf("Requesting uros reconnect after %u consecutive %s failure(s)\n",
+               static_cast<unsigned>(consecutive_failures),
+               publisher_name);
         selfRover->requestRosReconnect(publisher_name);
     }
     return false;
@@ -266,6 +276,7 @@ Rover::Rover() {
                         &selfRover->publisher,
                         &selfRover->msg,
                         "baseboard publisher",
+                        BASEBOARD_FAILURES_BEFORE_RECONNECT,
                         consecutive_failures,
                         last_error_log_ms)) {
                     selfRover->msg.data++;
@@ -296,12 +307,12 @@ Rover::Rover() {
         }
         odom_vel_publisher_initialized = true;
 
-        // 10 Hz timer to publish encoder feedback
+        // 20 Hz timer to publish encoder feedback
         odom_vel_timer = rcl_get_zero_initialized_timer();
         rc = rclc_timer_init_default2(
             &odom_vel_timer,
             support,
-            RCL_MS_TO_NS(100),  // 100ms = 10Hz
+            RCL_MS_TO_NS(50),  // 50ms = 20Hz
             [](rcl_timer_t *timer, int64_t last_call_time) {
                 (void)timer;
                 (void)last_call_time;
@@ -321,6 +332,7 @@ Rover::Rover() {
                     &selfRover->odom_vel_publisher,
                     &selfRover->odom_vel_msg,
                     "wheel velocity publisher",
+                    WHEEL_VELOCITY_FAILURES_BEFORE_RECONNECT,
                     consecutive_failures,
                     last_error_log_ms);
             },
