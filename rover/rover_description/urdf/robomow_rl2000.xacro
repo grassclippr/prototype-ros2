@@ -29,8 +29,8 @@
   <hardware>
 	  <plugin>$(arg hardware_plugin)</plugin>
     <param name="wheel_radius">0.127</param>
-    <param name="ticks_per_meter">150.0</param>
-    <param name="max_ticks_per_second">30.0</param>
+    <param name="ticks_per_meter">72.0</param>
+    <param name="max_ticks_per_second">40.0</param>
     <param name="feedback_timeout_sec">0.25</param>
   </hardware>
   <joint name="left_wheel_motor_joint">

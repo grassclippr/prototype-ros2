@@ -18,8 +18,8 @@ constexpr char kMotorCommandTopic[] = "/baseboard/motor_command";
 constexpr char kEncoderStateTopic[] = "/baseboard/encoder_state";
 constexpr char kSafetyStateTopic[] = "/baseboard/safety_state";
 constexpr double kDefaultWheelRadiusMeters = 0.127;
-constexpr double kDefaultTicksPerMeter = 150.0;
-constexpr double kDefaultMaxTicksPerSecond = 30.0;
+constexpr double kDefaultTicksPerMeter = 72.0;
+constexpr double kDefaultMaxTicksPerSecond = 40.0;
 constexpr double kDefaultFeedbackTimeoutSec = 0.25;
 
 bool loadPositiveDoubleParameter(

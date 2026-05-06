@@ -44,8 +44,8 @@ class RoverBaseboardSystem : public hardware_interface::SystemInterface {
     std::vector<double> feedback_wheel_velocities_;
     std::chrono::steady_clock::time_point last_feedback_time_;
     double wheel_radius_ = 0.127;
-    double ticks_per_meter_ = 150.0;
-    double max_ticks_per_second_ = 30.0;
+    double ticks_per_meter_ = 72.0;
+    double max_ticks_per_second_ = 40.0;
     double feedback_timeout_sec_ = 0.25;
     bool have_feedback_ = false;
     bool safety_interlock_triggered_ = false;

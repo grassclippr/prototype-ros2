@@ -8,7 +8,7 @@
 #include "driver/pcnt.h"
 
 // --- Configurable encoder / control constants ---
-constexpr float MAX_MOTOR_TICKS_PER_SECOND = 30.0f;
+constexpr float MAX_MOTOR_TICKS_PER_SECOND = 40.0f;
 constexpr float PI_KP                      = 0.2f;
 constexpr float PI_KI                      = 0.5f;
 constexpr float PI_INTEGRAL_LIMIT          = 1.0f;
