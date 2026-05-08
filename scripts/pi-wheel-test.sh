@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${SCRIPT_DIR}/pi-common.sh"
 
 require_cmd ssh
+require_cmd rsync
 
 LINEAR_X="${LINEAR_X:-0.20}"
 ANGULAR_Z="${ANGULAR_Z:-0.0}"
@@ -17,12 +18,26 @@ OBSERVE_ENCODER_SEC="${OBSERVE_ENCODER_SEC:-24}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-${PROJECT_ROOT}/.artifacts/wheel-tests}"
 RUN_ID="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 ARTIFACT_DIR="${ARTIFACT_DIR:-${ARTIFACT_ROOT}/${RUN_ID}}"
+REMOTE_STAGE_DIR="${REMOTE_STAGE_DIR:-/tmp/prototype-ros2-wheel-test}"
+REMOTE_SCRIPT="${REMOTE_STAGE_DIR}/wheel_cmd_vel_stamped.py"
+CONTAINER_SCRIPT="/tmp/wheel_cmd_vel_stamped.py"
+LOCAL_SCRIPT="${SCRIPT_DIR}/wheel_cmd_vel_stamped.py"
 
 mkdir -p "${ARTIFACT_DIR}"
 
+if [ ! -f "${LOCAL_SCRIPT}" ]; then
+  echo "error: missing helper script: ${LOCAL_SCRIPT}" >&2
+  exit 1
+fi
+
+echo "Staging helper script on ${PI_SSH}"
+ssh_pi "mkdir -p '${REMOTE_STAGE_DIR}'"
+rsync_pi "${LOCAL_SCRIPT}" "${PI_SSH}:${REMOTE_SCRIPT}"
+ssh_pi "podman cp '${REMOTE_SCRIPT}' core:${CONTAINER_SCRIPT}"
+
 echo "Running wheel test on ${PI_SSH}"
 ssh_pi \
-  "LINEAR_X='${LINEAR_X}' ANGULAR_Z='${ANGULAR_Z}' RATE_HZ='${RATE_HZ}' DURATION_SEC='${DURATION_SEC}' OBSERVE_MOTOR_SEC='${OBSERVE_MOTOR_SEC}' OBSERVE_ENCODER_SEC='${OBSERVE_ENCODER_SEC}' bash -s" <<'REMOTE' | tee "${ARTIFACT_DIR}/summary.txt"
+  "LINEAR_X='${LINEAR_X}' ANGULAR_Z='${ANGULAR_Z}' RATE_HZ='${RATE_HZ}' DURATION_SEC='${DURATION_SEC}' OBSERVE_MOTOR_SEC='${OBSERVE_MOTOR_SEC}' OBSERVE_ENCODER_SEC='${OBSERVE_ENCODER_SEC}' CONTAINER_SCRIPT='${CONTAINER_SCRIPT}' bash -s" <<'REMOTE' | tee "${ARTIFACT_DIR}/summary.txt"
 set -euo pipefail
 
 remote_dir="$(mktemp -d /tmp/wheel-test.XXXXXX)"
@@ -41,10 +56,10 @@ ros_env='source /opt/ros/jazzy/setup.bash && source /root/ros2_ws/install/setup.
 
 podman exec core bash -lc "${ros_env} && ros2 topic list -t" >"${topic_list_log}"
 required_topics=(
-  '/diff_drive_controller/cmd_vel '
-  '/diff_drive_controller/cmd_vel_out '
   '/baseboard/motor_command '
   '/baseboard/encoder_state '
+  '/diff_drive_controller/cmd_vel '
+  '/diff_drive_controller/cmd_vel_out '
 )
 for topic in "${required_topics[@]}"; do
   if ! grep -Fq "${topic}" "${topic_list_log}"; then
@@ -64,46 +79,7 @@ podman exec core bash -lc "${ros_env} && timeout ${OBSERVE_ENCODER_SEC} ros2 top
 cmd_vel_out_pid=$!
 
 sleep 1
-podman exec core bash -lc "${ros_env} && \
-  LINEAR_X='${LINEAR_X}' ANGULAR_Z='${ANGULAR_Z}' RATE_HZ='${RATE_HZ}' DURATION_SEC='${DURATION_SEC}' \
-  python3 - <<'PY'
-import os
-import time
-
-import rclpy
-from geometry_msgs.msg import TwistStamped
-
-linear_x = float(os.environ['LINEAR_X'])
-angular_z = float(os.environ['ANGULAR_Z'])
-rate_hz = float(os.environ['RATE_HZ'])
-duration_sec = float(os.environ['DURATION_SEC'])
-period_sec = 1.0 / rate_hz
-
-rclpy.init()
-node = rclpy.create_node('pi_wheel_test_cmd_vel')
-publisher = node.create_publisher(TwistStamped, '/diff_drive_controller/cmd_vel', 10)
-
-try:
-    end_time = time.monotonic() + duration_sec
-    while time.monotonic() < end_time:
-        msg = TwistStamped()
-        msg.header.stamp = node.get_clock().now().to_msg()
-        msg.header.frame_id = 'base_link'
-        msg.twist.linear.x = linear_x
-        msg.twist.angular.z = angular_z
-        publisher.publish(msg)
-        rclpy.spin_once(node, timeout_sec=0.0)
-        time.sleep(period_sec)
-
-    msg = TwistStamped()
-    msg.header.stamp = node.get_clock().now().to_msg()
-    msg.header.frame_id = 'base_link'
-    publisher.publish(msg)
-    rclpy.spin_once(node, timeout_sec=0.0)
-finally:
-    node.destroy_node()
-    rclpy.shutdown()
-PY"
+podman exec core bash -lc "${ros_env} && python3 '${CONTAINER_SCRIPT}' --linear-x '${LINEAR_X}' --angular-z '${ANGULAR_Z}' --rate-hz '${RATE_HZ}' --duration-sec '${DURATION_SEC}'"
 
 wait "${motor_pid}" || true
 wait "${encoder_pid}" || true
@@ -120,12 +96,14 @@ encoder_log = Path(sys.argv[2]).read_text()
 cmd_vel_log = Path(sys.argv[3]).read_text()
 cmd_vel_out_log = Path(sys.argv[4]).read_text()
 
+
 def count_blocks(text: str) -> int:
     return sum(1 for block in text.split('---') if block.strip())
 
+
 motor_samples = re.findall(r"left_speed_percent: ([0-9.\-]+)\s+right_speed_percent: ([0-9.\-]+)", motor_log)
 tick_samples = re.findall(r"left_ticks: (\d+)\s+right_ticks: (\d+)", encoder_log)
-feedback_samples = re.findall(
+vel_samples = re.findall(
     r"left_velocity_ticks_per_sec: ([0-9.\-]+)\s+right_velocity_ticks_per_sec: ([0-9.\-]+)",
     encoder_log,
 )
@@ -150,12 +128,16 @@ if tick_samples:
 else:
     print("  no encoder tick samples captured")
 
-if feedback_samples:
-    non_zero = [(float(left), float(right)) for left, right in feedback_samples if float(left) != 0.0 or float(right) != 0.0]
-    print(f"  non_zero_velocity_samples={len(non_zero)}")
-    if non_zero:
-        max_left = max(sample[0] for sample in non_zero)
-        max_right = max(sample[1] for sample in non_zero)
+if vel_samples:
+    non_zero_vel = [
+        (float(left), float(right))
+        for left, right in vel_samples
+        if float(left) != 0.0 or float(right) != 0.0
+    ]
+    print(f"  non_zero_velocity_samples={len(non_zero_vel)}")
+    if non_zero_vel:
+        max_left = max(sample[0] for sample in non_zero_vel)
+        max_right = max(sample[1] for sample in non_zero_vel)
         print(f"  max_velocity={max_left}/{max_right}")
 else:
     print("  no encoder velocity samples captured")

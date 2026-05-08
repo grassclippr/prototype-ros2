@@ -17,5 +17,42 @@ fi
 
 "${EXEC_CMD[@]}" bash -lc \
   "source /opt/ros/jazzy/setup.bash && source /root/ros2_ws/install/setup.bash && \
-   timeout ${DURATION_SEC}s ros2 topic pub -r ${RATE_HZ} /diff_drive_controller/cmd_vel geometry_msgs/msg/TwistStamped \
-   \"{header: {frame_id: base_link}, twist: {linear: {x: ${LINEAR_X}, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: ${ANGULAR_Z}}}}\""
+   LINEAR_X='${LINEAR_X}' ANGULAR_Z='${ANGULAR_Z}' RATE_HZ='${RATE_HZ}' DURATION_SEC='${DURATION_SEC}' \
+   python3 - <<'PY'
+import os
+import time
+
+import rclpy
+from geometry_msgs.msg import TwistStamped
+
+linear_x = float(os.environ['LINEAR_X'])
+angular_z = float(os.environ['ANGULAR_Z'])
+rate_hz = float(os.environ['RATE_HZ'])
+duration_sec = float(os.environ['DURATION_SEC'])
+period_sec = 1.0 / rate_hz
+
+rclpy.init()
+node = rclpy.create_node('send_cmd_vel')
+publisher = node.create_publisher(TwistStamped, '/diff_drive_controller/cmd_vel', 10)
+
+try:
+    end_time = time.monotonic() + duration_sec
+    while time.monotonic() < end_time:
+        msg = TwistStamped()
+        msg.header.stamp = node.get_clock().now().to_msg()
+        msg.header.frame_id = 'base_link'
+        msg.twist.linear.x = linear_x
+        msg.twist.angular.z = angular_z
+        publisher.publish(msg)
+        rclpy.spin_once(node, timeout_sec=0.0)
+        time.sleep(period_sec)
+
+    msg = TwistStamped()
+    msg.header.stamp = node.get_clock().now().to_msg()
+    msg.header.frame_id = 'base_link'
+    publisher.publish(msg)
+    rclpy.spin_once(node, timeout_sec=0.0)
+finally:
+    node.destroy_node()
+    rclpy.shutdown()
+PY"
