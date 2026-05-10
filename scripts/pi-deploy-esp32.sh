@@ -85,6 +85,7 @@ BUNDLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 . "${BUNDLE_DIR}/manifest.env"
 
+sudo systemctl stop grassclippr-serial-mux-proxy grassclippr-core grassclippr-micro-ros-agent >/dev/null 2>&1 || true
 podman rm -f core serial_mux_proxy micro_ros_agent >/dev/null 2>&1 || true
 
 if command -v lsof >/dev/null 2>&1; then
