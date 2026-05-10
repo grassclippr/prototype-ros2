@@ -17,12 +17,14 @@
 #endif
 
 #ifndef ROVER_ENABLE_NMEA_PUBLISHER
-#define ROVER_ENABLE_NMEA_PUBLISHER 0
+#define ROVER_ENABLE_NMEA_PUBLISHER 1
 #endif
 
 constexpr uint32_t WHEEL_CMD_TIMEOUT_MS = 500;
 constexpr uint32_t GNSS_READ_TIMEOUT_MS = 200;
 constexpr size_t MAX_NMEA_SENTENCE_LEN = 82;
+constexpr size_t GNSS_UART_RX_BUFFER_SIZE = 4096;
+constexpr uint32_t NMEA_PUBLISH_PERIOD_MS = 20;
 
 static Rover *selfRover = nullptr;
 
@@ -138,6 +140,7 @@ bool publishWithReconnect(
 
 Rover::Rover() {
     selfRover = this;
+    nmea_publish_queue = xQueueCreate(16, sizeof(PendingNmeaSentence));
 
     USBSerial.begin(921600);
     leds.setup();
@@ -227,6 +230,49 @@ Rover::Rover() {
             return false;
         }
         nmea_publisher_initialized = true;
+
+        nmea_publish_timer = rcl_get_zero_initialized_timer();
+        rc = rclc_timer_init_default2(
+            &nmea_publish_timer,
+            support,
+            RCL_MS_TO_NS(NMEA_PUBLISH_PERIOD_MS),
+            [](rcl_timer_t *timer, int64_t last_call_time) {
+                (void)timer;
+                (void)last_call_time;
+                if (selfRover->nmea_publish_queue == nullptr) {
+                    return;
+                }
+
+                PendingNmeaSentence pending{};
+                if (xQueueReceive(selfRover->nmea_publish_queue, &pending, 0) != pdTRUE) {
+                    return;
+                }
+
+                memset(selfRover->nmea_msg.sentence.data, 0, selfRover->nmea_msg.sentence.capacity);
+                memcpy(selfRover->nmea_msg.sentence.data, pending.data, pending.len);
+                selfRover->nmea_msg.sentence.data[pending.len] = '\0';
+                selfRover->nmea_msg.sentence.size = pending.len;
+
+                const uint32_t now_ms = millis();
+                selfRover->nmea_msg.header.stamp.sec = now_ms / 1000;
+                selfRover->nmea_msg.header.stamp.nanosec = (now_ms % 1000) * 1000000UL;
+
+                static uint8_t consecutive_failures = 0;
+                static uint32_t last_error_log_ms = 0;
+                (void)publishWithReconnect(
+                    &selfRover->nmea_publisher,
+                    &selfRover->nmea_msg,
+                    "nmea publisher",
+                    WHEEL_VELOCITY_FAILURES_BEFORE_RECONNECT,
+                    consecutive_failures,
+                    last_error_log_ms);
+            },
+            true);
+        if (rc != RCL_RET_OK) {
+            log_rcl_error("nmea publish timer init", rc);
+            return false;
+        }
+        nmea_publish_timer_initialized = true;
 #endif
 
         // Subscription creation can fail if the XRCE session isn't
@@ -393,10 +439,13 @@ Rover::Rover() {
 
         return true;
     });
-    uros_client.onExecutorInit(4, [&](rclc_executor_t *executor) {
+    uros_client.onExecutorInit(5, [&](rclc_executor_t *executor) {
         RCCHECK(rclc_executor_add_timer(executor, &timer));
         RCCHECK(rclc_executor_add_timer(executor, &encoder_state_timer));
         RCCHECK(rclc_executor_add_timer(executor, &safety_state_timer));
+#if ROVER_ENABLE_NMEA_PUBLISHER
+        RCCHECK(rclc_executor_add_timer(executor, &nmea_publish_timer));
+#endif
         RCCHECK(rclc_executor_add_subscription(
             executor,
             &motor_command_sub,
@@ -430,6 +479,10 @@ Rover::Rover() {
             baseboard_publisher_initialized = false;
         }
 #if ROVER_ENABLE_NMEA_PUBLISHER
+        if (nmea_publish_timer_initialized) {
+            RCSOFTCHECK(rcl_timer_fini(&nmea_publish_timer));
+            nmea_publish_timer_initialized = false;
+        }
         if (nmea_publisher_initialized) {
             RCSOFTCHECK(rcl_publisher_fini(&nmea_publisher, node));
             nmea_publisher_initialized = false;
@@ -519,7 +572,9 @@ void Rover::requestRosReconnect(const char *reason) {
 void Rover::gnssReceiveTask(void *arg) {
     Rover *self = (Rover *)arg;
 
-    // start uart port with UART_RX_PIN and UART_TX_PIN
+    // GNSS emits bursts at 460800 baud; a larger RX buffer helps avoid
+    // dropped bytes while this task is publishing prior sentences.
+    Serial2.setRxBufferSize(GNSS_UART_RX_BUFFER_SIZE);
     Serial2.begin(460800, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
     // Serial2.print("$PQTMCFGMSGRATE,W,GGA,1,1*58\r\n");
     // Serial2.print("$PAIR062,0,1*3F\r\n");
@@ -550,7 +605,7 @@ void Rover::gnssReceiveTask(void *arg) {
 
     while (true) {
         if (Serial2.available() < 1) {
-            vTaskDelay(10 / portTICK_PERIOD_MS);
+            vTaskDelay(1);
             continue;
         }
         int first = Serial2.peek();
@@ -601,13 +656,19 @@ void Rover::gnssReceiveTask(void *arg) {
                 }
 
 #if ROVER_ENABLE_NMEA_PUBLISHER
-                if (line.length() <= MAX_NMEA_SENTENCE_LEN && self->uros_client.isConnected() && self->nmea_publisher_initialized) {
-                    memset(selfRover->nmea_msg.sentence.data, 0, selfRover->nmea_msg.sentence.capacity);
-                    memcpy(selfRover->nmea_msg.sentence.data, line.c_str(), line.length());
-                    selfRover->nmea_msg.sentence.data[line.length()] = '\0';
-                    selfRover->nmea_msg.sentence.size = line.length();
-
-                    RCSOFTCHECK(rcl_publish(&selfRover->nmea_publisher, &selfRover->nmea_msg, NULL));
+                if (line.length() <= MAX_NMEA_SENTENCE_LEN &&
+                    self->uros_client.isConnected() &&
+                    self->nmea_publisher_initialized &&
+                    self->nmea_publish_queue != nullptr) {
+                    PendingNmeaSentence pending{};
+                    pending.len = line.length();
+                    memcpy(pending.data, line.c_str(), pending.len);
+                    pending.data[pending.len] = '\0';
+                    if (xQueueSend(self->nmea_publish_queue, &pending, 0) != pdTRUE) {
+                        PendingNmeaSentence dropped{};
+                        (void)xQueueReceive(self->nmea_publish_queue, &dropped, 0);
+                        (void)xQueueSend(self->nmea_publish_queue, &pending, 0);
+                    }
                 }
 #endif
                 break;

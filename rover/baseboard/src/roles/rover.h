@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <esp_now.h>
+#include <freertos/queue.h>
 #include <nmea_msgs/msg/sentence.h>
 #include <rover_baseboard_msgs/msg/encoder_state.h>
 #include <rover_baseboard_msgs/msg/motor_command.h>
@@ -20,6 +21,11 @@ class Rover {
     void requestRosReconnect(const char *reason);
 
    private:
+    struct PendingNmeaSentence {
+        size_t len;
+        char data[96];
+    };
+
     // Tasks
     LedControl leds;
     UrosClient uros_client;
@@ -39,6 +45,8 @@ class Rover {
 
     rcl_publisher_t nmea_publisher = rcl_get_zero_initialized_publisher();
     nmea_msgs__msg__Sentence nmea_msg;
+    rcl_timer_t nmea_publish_timer = rcl_get_zero_initialized_timer();
+    QueueHandle_t nmea_publish_queue = nullptr;
 
     rcl_subscription_t motor_command_sub = rcl_get_zero_initialized_subscription();
     rover_baseboard_msgs__msg__MotorCommand motor_command_msg;
@@ -64,6 +72,7 @@ class Rover {
     bool paired = false;
     bool baseboard_publisher_initialized = false;
     bool nmea_publisher_initialized = false;
+    bool nmea_publish_timer_initialized = false;
     bool motor_command_msg_initialized = false;
     bool motor_command_sub_initialized = false;
     bool encoder_state_msg_initialized = false;
