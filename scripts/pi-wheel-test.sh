@@ -95,11 +95,8 @@ motor_log = Path(sys.argv[1]).read_text()
 encoder_log = Path(sys.argv[2]).read_text()
 cmd_vel_log = Path(sys.argv[3]).read_text()
 cmd_vel_out_log = Path(sys.argv[4]).read_text()
-
-
 def count_blocks(text: str) -> int:
     return sum(1 for block in text.split('---') if block.strip())
-
 
 motor_samples = re.findall(r"left_speed_percent: ([0-9.\-]+)\s+right_speed_percent: ([0-9.\-]+)", motor_log)
 tick_samples = re.findall(r"left_ticks: (\d+)\s+right_ticks: (\d+)", encoder_log)
@@ -129,11 +126,7 @@ else:
     print("  no encoder tick samples captured")
 
 if vel_samples:
-    non_zero_vel = [
-        (float(left), float(right))
-        for left, right in vel_samples
-        if float(left) != 0.0 or float(right) != 0.0
-    ]
+    non_zero_vel = [(float(left), float(right)) for left, right in vel_samples if float(left) != 0.0 or float(right) != 0.0]
     print(f"  non_zero_velocity_samples={len(non_zero_vel)}")
     if non_zero_vel:
         max_left = max(sample[0] for sample in non_zero_vel)

@@ -33,6 +33,8 @@ make ros ARGS='launch rover_navigation localization.launch.py use_imu:=true'
 
 The initial integration pass uses gyro + accelerometer only. Magnetometer heading is intentionally deferred until the basic localization path is stable.
 
+When GNSS is enabled, the baseboard now publishes raw sentences on `/baseboard/nmea_sentence_raw`. A Pi-side restamp node republishes them on `/nmea_sentence` with Pi receipt time in `header.stamp` while `nmea_navsat_driver` continues to expose GNSS UTC via `/time_reference`.
+
 ## Validation commands
 
 ```bash

@@ -228,7 +228,7 @@ Rover::Rover() {
             &nmea_publisher,
             node,
             ROSIDL_GET_MSG_TYPE_SUPPORT(nmea_msgs, msg, Sentence),
-            "nmea_sentence");
+            "/baseboard/nmea_sentence_raw");
         if (rc != RCL_RET_OK) {
             log_rcl_error("nmea publisher init", rc);
             return false;

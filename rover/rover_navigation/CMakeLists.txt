@@ -14,6 +14,7 @@ install(PROGRAMS
   scripts/imu_check.py
   scripts/localization_check.py
   scripts/nav_stack_check.py
+  scripts/nmea_sentence_restamper.py
   scripts/odom_calibration_check.py
   scripts/send_nav_goal.py
   scripts/wheel_velocity_odom_bridge.py

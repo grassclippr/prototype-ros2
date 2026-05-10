@@ -174,8 +174,22 @@ def generate_launch_description():
         ),
 
         Node(
+            package='rover_navigation',
+            executable='nmea_sentence_restamper.py',
+            name='nmea_sentence_restamper',
+            output='screen',
+            parameters=[{
+                'input_topic': '/baseboard/nmea_sentence_raw',
+                'output_topic': '/nmea_sentence',
+                'default_frame_id': 'gps',
+            }],
+            condition=IfCondition(PythonExpression(["'", mode, "' == 'hw'"]))
+        ),
+
+        Node(
             package='nmea_navsat_driver',
             executable='nmea_topic_driver',
+            remappings=[('nmea_sentence', '/nmea_sentence')],
             condition=IfCondition(PythonExpression(["'", mode, "' == 'hw'"]))
         )
     ])
