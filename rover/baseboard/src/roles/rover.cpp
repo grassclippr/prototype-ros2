@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include <rmw/qos_profiles.h>
+#include <rosidl_runtime_c/string_functions.h>
 
 #include "./espnow.h"
 
@@ -83,6 +84,9 @@ bool readNmeaLine(HardwareSerial &serial, String &line, uint32_t timeout_ms) {
         char ch = static_cast<char>(raw);
         if (ch == '\n') {
             return line.length() > 0;
+        }
+        if (ch == '\r') {
+            continue;
         }
 
         line += ch;
@@ -230,6 +234,10 @@ Rover::Rover() {
             return false;
         }
         nmea_publisher_initialized = true;
+        if (!rosidl_runtime_c__String__assign(&nmea_msg.header.frame_id, "gps")) {
+            printf("Failed to assign NMEA frame_id\n");
+            return false;
+        }
 
         nmea_publish_timer = rcl_get_zero_initialized_timer();
         rc = rclc_timer_init_default2(
