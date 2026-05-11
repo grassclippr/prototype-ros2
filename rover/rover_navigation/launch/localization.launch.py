@@ -1,7 +1,7 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -13,6 +13,7 @@ def generate_launch_description():
     use_imu = LaunchConfiguration("use_imu")
     use_gnss = LaunchConfiguration("use_gnss")
     publish_map_odom_identity = LaunchConfiguration("publish_map_odom_identity")
+    gnss_transport = LaunchConfiguration("gnss_transport")
     imu_i2c_bus = LaunchConfiguration("imu_i2c_bus")
     imu_address = LaunchConfiguration("imu_address")
     imu_frame_id = LaunchConfiguration("imu_frame_id")
@@ -55,6 +56,11 @@ def generate_launch_description():
             "publish_map_odom_identity",
             default_value="true",
             description="Publish identity map->odom for early local-goal Nav2 bring-up.",
+        ),
+        DeclareLaunchArgument(
+            "gnss_transport",
+            default_value="structured_fix",
+            description="GNSS transport mode: raw_nmea or structured_fix.",
         ),
         DeclareLaunchArgument(
             "imu_i2c_bus",
@@ -148,7 +154,7 @@ def generate_launch_description():
                 "output_topic": "/nmea_sentence",
                 "default_frame_id": "gps",
             }],
-            condition=IfCondition(use_gnss),
+            condition=IfCondition(PythonExpression(["'", use_gnss, "' == 'true' and '", gnss_transport, "' == 'raw_nmea'"])),
         ),
         Node(
             package="nmea_navsat_driver",
@@ -158,7 +164,20 @@ def generate_launch_description():
             remappings=[
                 ("nmea_sentence", "/nmea_sentence"),
             ],
-            condition=IfCondition(use_gnss),
+            condition=IfCondition(PythonExpression(["'", use_gnss, "' == 'true' and '", gnss_transport, "' == 'raw_nmea'"])),
+        ),
+        Node(
+            package=PACKAGE_NAME,
+            executable="gnss_fix_bridge.py",
+            name="gnss_fix_bridge",
+            output="screen",
+            parameters=[{
+                "input_topic": "/baseboard/gnss_fix",
+                "fix_topic": "/fix",
+                "time_reference_topic": "/time_reference",
+                "frame_id": "gps",
+            }],
+            condition=IfCondition(PythonExpression(["'", use_gnss, "' == 'true' and '", gnss_transport, "' == 'structured_fix'"])),
         ),
         Node(
             package="robot_localization",

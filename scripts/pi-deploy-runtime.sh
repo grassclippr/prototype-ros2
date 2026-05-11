@@ -54,6 +54,7 @@ SERIAL_DEV='${SERIAL_DEV}'
 PROXY_PORT='${PROXY_PORT}'
 BAUDRATE='${BAUDRATE}'
 ROVER_MODE='${ROVER_MODE}'
+GNSS_TRANSPORT='${GNSS_TRANSPORT}'
 USE_JOYSTICK='${USE_JOYSTICK}'
 JOY_BACKEND='${JOY_BACKEND}'
 JOY_DEV='${JOY_DEV}'
@@ -111,6 +112,7 @@ fi
 podman run "${core_args[@]}" "${CORE_IMAGE}" \
   ros2 launch rover_description robot_control.launch.py \
   "mode:=${ROVER_MODE}" \
+  "gnss_transport:=${GNSS_TRANSPORT}" \
   "use_joystick:=${USE_JOYSTICK}" \
   "joy_backend:=${JOY_BACKEND}" \
   "joy_dev:=${JOY_DEV}" \

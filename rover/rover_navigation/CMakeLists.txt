@@ -9,6 +9,7 @@ install(
 )
 
 install(PROGRAMS
+  scripts/gnss_fix_bridge.py
   scripts/gnss_check.py
   scripts/icm20948_node.py
   scripts/imu_check.py

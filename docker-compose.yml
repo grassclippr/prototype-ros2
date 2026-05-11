@@ -14,6 +14,7 @@ services:
       - rover_description
       - robot_control.launch.py
       - mode:=${ROVER_MODE:-hw}
+      - gnss_transport:=${GNSS_TRANSPORT:-structured_fix}
       - use_joystick:=${USE_JOYSTICK:-true}
       - joy_backend:=${JOY_BACKEND:-game_controller_node}
       - joy_dev:=${JOY_DEV:-/dev/input/js0}

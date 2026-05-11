@@ -76,6 +76,7 @@ baseboard-build: $(MICROROS_HEADER_MARKER)
 $(MICROROS_HEADER_MARKER): \
 	$(PIO_PROJECT)/extra_packages/nmea_msgs/msg/Sentence.msg \
 	$(PIO_PROJECT)/extra_packages/rover_baseboard_msgs/msg/EncoderState.msg \
+	$(PIO_PROJECT)/extra_packages/rover_baseboard_msgs/msg/GnssFix.msg \
 	$(PIO_PROJECT)/extra_packages/rover_baseboard_msgs/msg/MotorCommand.msg \
 	$(PIO_PROJECT)/extra_packages/rover_baseboard_msgs/msg/SafetyState.msg
 	@echo "micro-ROS headers missing or outdated. Triggering build..."

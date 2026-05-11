@@ -25,6 +25,7 @@
   <exec_depend>nmea_navsat_driver</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>robot_localization</exec_depend>
+  <exec_depend>rover_baseboard_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
 

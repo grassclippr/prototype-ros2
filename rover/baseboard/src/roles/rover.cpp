@@ -19,11 +19,19 @@
 #define ROVER_ENABLE_NMEA_PUBLISHER 1
 #endif
 
+#ifndef ROVER_GNSS_PUBLISH_PERIOD_MS
+#if ROVER_GNSS_TRANSPORT_MODE == ROVER_GNSS_TRANSPORT_STRUCTURED_FIX
+#define ROVER_GNSS_PUBLISH_PERIOD_MS 200
+#else
+#define ROVER_GNSS_PUBLISH_PERIOD_MS 20
+#endif
+#endif
+
 constexpr uint32_t WHEEL_CMD_TIMEOUT_MS = 500;
 constexpr uint32_t GNSS_READ_TIMEOUT_MS = 200;
 constexpr size_t MAX_NMEA_SENTENCE_LEN = 82;
 constexpr size_t GNSS_UART_RX_BUFFER_SIZE = 4096;
-constexpr uint32_t NMEA_PUBLISH_PERIOD_MS = 20;
+constexpr uint32_t GNSS_PUBLISH_PERIOD_MS = ROVER_GNSS_PUBLISH_PERIOD_MS;
 
 static Rover *selfRover = nullptr;
 
@@ -31,6 +39,7 @@ namespace {
 constexpr uint32_t BASEBOARD_HEARTBEAT_MS = 5000;
 constexpr uint8_t BASEBOARD_FAILURES_BEFORE_RECONNECT = 0;
 constexpr uint8_t WHEEL_VELOCITY_FAILURES_BEFORE_RECONNECT = 20;
+constexpr uint8_t GNSS_FAILURES_BEFORE_RECONNECT = 0;
 
 bool waitForSerialBytes(HardwareSerial &serial, size_t count, uint32_t timeout_ms) {
     const unsigned long deadline = millis() + timeout_ms;
@@ -121,6 +130,166 @@ NmeaSentenceType classifyNmeaSentence(const String &line) {
     }
     return NmeaSentenceType::None;
 }
+
+#if ROVER_GNSS_TRANSPORT_MODE == ROVER_GNSS_TRANSPORT_STRUCTURED_FIX
+bool parseUnsignedInt(const String &field, uint32_t &value) {
+    if (field.isEmpty()) {
+        return false;
+    }
+    char *end = nullptr;
+    const unsigned long parsed = strtoul(field.c_str(), &end, 10);
+    if (end == field.c_str() || *end != '\0') {
+        return false;
+    }
+    value = static_cast<uint32_t>(parsed);
+    return true;
+}
+
+bool parseFloatField(const String &field, float &value) {
+    if (field.isEmpty()) {
+        return false;
+    }
+    char *end = nullptr;
+    value = strtof(field.c_str(), &end);
+    return end != field.c_str() && *end == '\0';
+}
+
+bool parseDoubleField(const String &field, double &value) {
+    if (field.isEmpty()) {
+        return false;
+    }
+    char *end = nullptr;
+    value = strtod(field.c_str(), &end);
+    return end != field.c_str() && *end == '\0';
+}
+
+String nmeaFieldAt(const String &line, int field_index) {
+    int field = 0;
+    size_t start = 0;
+    while (start <= line.length()) {
+        const int comma = line.indexOf(',', start);
+        const size_t end = comma >= 0 ? static_cast<size_t>(comma) : line.length();
+        if (field == field_index) {
+            return line.substring(start, end);
+        }
+        if (comma < 0) {
+            break;
+        }
+        start = static_cast<size_t>(comma) + 1;
+        field++;
+    }
+    return "";
+}
+
+bool parseUtcTimeOfDay(const String &field, uint8_t &hour, uint8_t &minute, float &seconds) {
+    if (field.length() < 6) {
+        return false;
+    }
+
+    hour = static_cast<uint8_t>(field.substring(0, 2).toInt());
+    minute = static_cast<uint8_t>(field.substring(2, 4).toInt());
+    const String seconds_field = field.substring(4);
+    return parseFloatField(seconds_field, seconds);
+}
+
+bool parseUtcDate(const String &field, uint16_t &year, uint8_t &month, uint8_t &day) {
+    if (field.length() != 6) {
+        return false;
+    }
+    day = static_cast<uint8_t>(field.substring(0, 2).toInt());
+    month = static_cast<uint8_t>(field.substring(2, 4).toInt());
+    const uint8_t year_two_digits = static_cast<uint8_t>(field.substring(4, 6).toInt());
+    year = static_cast<uint16_t>(2000 + year_two_digits);
+    return day > 0 && day <= 31 && month > 0 && month <= 12;
+}
+
+bool parseLatitudeLongitude(const String &value_field, const String &hemisphere_field, bool is_latitude, double &value_deg) {
+    double raw = 0.0;
+    if (!parseDoubleField(value_field, raw)) {
+        return false;
+    }
+
+    const double degrees = floor(raw / 100.0);
+    const double minutes = raw - (degrees * 100.0);
+    if ((is_latitude && value_field.length() < 4) || (!is_latitude && value_field.length() < 5)) {
+        return false;
+    }
+    if (degrees < 0.0 || minutes < 0.0 || minutes >= 60.0) {
+        return false;
+    }
+
+    value_deg = degrees + (minutes / 60.0);
+    if (hemisphere_field == "S" || hemisphere_field == "W") {
+        value_deg = -value_deg;
+    } else if (!(hemisphere_field == "N" || hemisphere_field == "E")) {
+        return false;
+    }
+    return true;
+}
+
+bool fillUtcTimestamp(
+    const Rover::UtcDate &date,
+    const String &time_field,
+    Rover::LatestGnssFix &fix)
+{
+    uint8_t hour = 0;
+    uint8_t minute = 0;
+    float seconds = 0.0f;
+    if (!date.valid || !parseUtcTimeOfDay(time_field, hour, minute, seconds)) {
+        return false;
+    }
+
+    fix.utc_year = date.year;
+    fix.utc_month = date.month;
+    fix.utc_day = date.day;
+    fix.utc_hour = hour;
+    fix.utc_minute = minute;
+    fix.utc_second = seconds;
+    return true;
+}
+
+bool parseRmcDate(const String &line, Rover::UtcDate &date) {
+    uint16_t year = 0;
+    uint8_t month = 0;
+    uint8_t day = 0;
+    if (!parseUtcDate(nmeaFieldAt(line, 9), year, month, day)) {
+        return false;
+    }
+    date.valid = true;
+    date.year = year;
+    date.month = month;
+    date.day = day;
+    return true;
+}
+
+bool parseGgaFix(const String &line, const Rover::UtcDate &date, Rover::LatestGnssFix &fix) {
+    const String time_field = nmeaFieldAt(line, 1);
+    const String lat_field = nmeaFieldAt(line, 2);
+    const String lat_hemi = nmeaFieldAt(line, 3);
+    const String lon_field = nmeaFieldAt(line, 4);
+    const String lon_hemi = nmeaFieldAt(line, 5);
+    const String fix_quality_field = nmeaFieldAt(line, 6);
+    const String satellites_field = nmeaFieldAt(line, 7);
+    const String hdop_field = nmeaFieldAt(line, 8);
+    const String altitude_field = nmeaFieldAt(line, 9);
+
+    uint32_t fix_quality = 0;
+    uint32_t satellites = 0;
+    if (!parseUnsignedInt(fix_quality_field, fix_quality) ||
+        !parseUnsignedInt(satellites_field, satellites) ||
+        !parseLatitudeLongitude(lat_field, lat_hemi, true, fix.latitude_deg) ||
+        !parseLatitudeLongitude(lon_field, lon_hemi, false, fix.longitude_deg) ||
+        !parseDoubleField(altitude_field, fix.altitude_m) ||
+        !parseFloatField(hdop_field, fix.hdop)) {
+        return false;
+    }
+
+    fix.fix_quality = static_cast<uint8_t>(fix_quality);
+    fix.satellites = static_cast<uint8_t>(satellites);
+    fix.utc_valid = fillUtcTimestamp(date, time_field, fix);
+    return true;
+}
+#endif
 
 bool publishWithReconnect(
     rcl_publisher_t *publisher,
@@ -246,7 +415,7 @@ Rover::Rover() {
         }
         baseboard_publisher_initialized = true;
 
-#if ROVER_ENABLE_NMEA_PUBLISHER
+#if ROVER_ENABLE_NMEA_PUBLISHER && ROVER_GNSS_TRANSPORT_MODE == ROVER_GNSS_TRANSPORT_RAW_NMEA
         rc = rclc_publisher_init_default(
             &nmea_publisher,
             node,
@@ -262,18 +431,24 @@ Rover::Rover() {
         rc = rclc_timer_init_default2(
             &nmea_publish_timer,
             support,
-            RCL_MS_TO_NS(NMEA_PUBLISH_PERIOD_MS),
+            RCL_MS_TO_NS(GNSS_PUBLISH_PERIOD_MS),
             [](rcl_timer_t *timer, int64_t last_call_time) {
                 (void)timer;
                 (void)last_call_time;
                 LatestNmeaSentence pending{};
                 taskENTER_CRITICAL(&selfRover->nmea_publish_mux);
-                if (selfRover->latest_gga_sentence.pending) {
+                if (selfRover->publish_gga_next && selfRover->latest_gga_sentence.pending) {
                     pending = selfRover->latest_gga_sentence;
                     selfRover->latest_gga_sentence.pending = false;
+                    selfRover->publish_gga_next = false;
                 } else if (selfRover->latest_rmc_sentence.pending) {
                     pending = selfRover->latest_rmc_sentence;
                     selfRover->latest_rmc_sentence.pending = false;
+                    selfRover->publish_gga_next = true;
+                } else if (selfRover->latest_gga_sentence.pending) {
+                    pending = selfRover->latest_gga_sentence;
+                    selfRover->latest_gga_sentence.pending = false;
+                    selfRover->publish_gga_next = false;
                 }
                 taskEXIT_CRITICAL(&selfRover->nmea_publish_mux);
 
@@ -296,7 +471,7 @@ Rover::Rover() {
                     &selfRover->nmea_publisher,
                     &selfRover->nmea_msg,
                     "nmea publisher",
-                    WHEEL_VELOCITY_FAILURES_BEFORE_RECONNECT,
+                    GNSS_FAILURES_BEFORE_RECONNECT,
                     consecutive_failures,
                     last_error_log_ms);
             },
@@ -306,6 +481,77 @@ Rover::Rover() {
             return false;
         }
         nmea_publish_timer_initialized = true;
+#endif
+
+#if ROVER_GNSS_TRANSPORT_MODE == ROVER_GNSS_TRANSPORT_STRUCTURED_FIX
+        gnss_fix_publisher = rcl_get_zero_initialized_publisher();
+        rover_baseboard_msgs__msg__GnssFix__init(&gnss_fix_msg);
+        gnss_fix_msg_initialized = true;
+        rmw_qos_profile_t gnss_fix_qos = rmw_qos_profile_sensor_data;
+        gnss_fix_qos.history = RMW_QOS_POLICY_HISTORY_KEEP_LAST;
+        gnss_fix_qos.depth = 1;
+        rc = rclc_publisher_init(
+            &gnss_fix_publisher,
+            node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(rover_baseboard_msgs, msg, GnssFix),
+            "/baseboard/gnss_fix",
+            &gnss_fix_qos);
+        if (rc != RCL_RET_OK) {
+            log_rcl_error("gnss_fix publisher init", rc);
+            return false;
+        }
+        gnss_fix_publisher_initialized = true;
+
+        gnss_fix_publish_timer = rcl_get_zero_initialized_timer();
+        rc = rclc_timer_init_default2(
+            &gnss_fix_publish_timer,
+            support,
+            RCL_MS_TO_NS(GNSS_PUBLISH_PERIOD_MS),
+            [](rcl_timer_t *timer, int64_t last_call_time) {
+                (void)timer;
+                (void)last_call_time;
+                LatestGnssFix pending{};
+                taskENTER_CRITICAL(&selfRover->nmea_publish_mux);
+                if (selfRover->latest_gnss_fix.pending) {
+                    pending = selfRover->latest_gnss_fix;
+                    selfRover->latest_gnss_fix.pending = false;
+                }
+                taskEXIT_CRITICAL(&selfRover->nmea_publish_mux);
+
+                if (!pending.pending) {
+                    return;
+                }
+
+                selfRover->gnss_fix_msg.utc_valid = pending.utc_valid;
+                selfRover->gnss_fix_msg.utc_year = pending.utc_year;
+                selfRover->gnss_fix_msg.utc_month = pending.utc_month;
+                selfRover->gnss_fix_msg.utc_day = pending.utc_day;
+                selfRover->gnss_fix_msg.utc_hour = pending.utc_hour;
+                selfRover->gnss_fix_msg.utc_minute = pending.utc_minute;
+                selfRover->gnss_fix_msg.utc_second = pending.utc_second;
+                selfRover->gnss_fix_msg.latitude_deg = pending.latitude_deg;
+                selfRover->gnss_fix_msg.longitude_deg = pending.longitude_deg;
+                selfRover->gnss_fix_msg.altitude_m = pending.altitude_m;
+                selfRover->gnss_fix_msg.hdop = pending.hdop;
+                selfRover->gnss_fix_msg.satellites = pending.satellites;
+                selfRover->gnss_fix_msg.fix_quality = pending.fix_quality;
+
+                static uint8_t consecutive_failures = 0;
+                static uint32_t last_error_log_ms = 0;
+                (void)publishWithReconnect(
+                    &selfRover->gnss_fix_publisher,
+                    &selfRover->gnss_fix_msg,
+                    "gnss_fix publisher",
+                    GNSS_FAILURES_BEFORE_RECONNECT,
+                    consecutive_failures,
+                    last_error_log_ms);
+            },
+            true);
+        if (rc != RCL_RET_OK) {
+            log_rcl_error("gnss_fix timer init", rc);
+            return false;
+        }
+        gnss_fix_publish_timer_initialized = true;
 #endif
 
         // Subscription creation can fail if the XRCE session isn't
@@ -476,8 +722,11 @@ Rover::Rover() {
         RCCHECK(rclc_executor_add_timer(executor, &timer));
         RCCHECK(rclc_executor_add_timer(executor, &encoder_state_timer));
         RCCHECK(rclc_executor_add_timer(executor, &safety_state_timer));
-#if ROVER_ENABLE_NMEA_PUBLISHER
+#if ROVER_ENABLE_NMEA_PUBLISHER && ROVER_GNSS_TRANSPORT_MODE == ROVER_GNSS_TRANSPORT_RAW_NMEA
         RCCHECK(rclc_executor_add_timer(executor, &nmea_publish_timer));
+#endif
+#if ROVER_GNSS_TRANSPORT_MODE == ROVER_GNSS_TRANSPORT_STRUCTURED_FIX
+        RCCHECK(rclc_executor_add_timer(executor, &gnss_fix_publish_timer));
 #endif
         RCCHECK(rclc_executor_add_subscription(
             executor,
@@ -511,7 +760,7 @@ Rover::Rover() {
             RCSOFTCHECK(rcl_publisher_fini(&publisher, node));
             baseboard_publisher_initialized = false;
         }
-#if ROVER_ENABLE_NMEA_PUBLISHER
+#if ROVER_ENABLE_NMEA_PUBLISHER && ROVER_GNSS_TRANSPORT_MODE == ROVER_GNSS_TRANSPORT_RAW_NMEA
         if (nmea_publish_timer_initialized) {
             RCSOFTCHECK(rcl_timer_fini(&nmea_publish_timer));
             nmea_publish_timer_initialized = false;
@@ -519,6 +768,20 @@ Rover::Rover() {
         if (nmea_publisher_initialized) {
             RCSOFTCHECK(rcl_publisher_fini(&nmea_publisher, node));
             nmea_publisher_initialized = false;
+        }
+#endif
+#if ROVER_GNSS_TRANSPORT_MODE == ROVER_GNSS_TRANSPORT_STRUCTURED_FIX
+        if (gnss_fix_publish_timer_initialized) {
+            RCSOFTCHECK(rcl_timer_fini(&gnss_fix_publish_timer));
+            gnss_fix_publish_timer_initialized = false;
+        }
+        if (gnss_fix_publisher_initialized) {
+            RCSOFTCHECK(rcl_publisher_fini(&gnss_fix_publisher, node));
+            gnss_fix_publisher_initialized = false;
+        }
+        if (gnss_fix_msg_initialized) {
+            rover_baseboard_msgs__msg__GnssFix__fini(&gnss_fix_msg);
+            gnss_fix_msg_initialized = false;
         }
 #endif
         if (motor_command_sub_initialized) {
@@ -620,6 +883,7 @@ void Rover::gnssReceiveTask(void *arg) {
     self->sendNmeaCommand("QTMSAVEPAR"); // Save settings to non-volatile memory, so they persist after reboot
     delay(100);
 
+#if ROVER_ENABLE_NMEA_PUBLISHER && ROVER_GNSS_TRANSPORT_MODE == ROVER_GNSS_TRANSPORT_RAW_NMEA
     if (!nmea_msgs__msg__Sentence__init(&self->nmea_msg)) {
         printf("Failed to initialize NMEA sentence message\n");
         vTaskDelete(nullptr);
@@ -635,6 +899,7 @@ void Rover::gnssReceiveTask(void *arg) {
     }
     self->nmea_msg.sentence.size = 0;
     self->nmea_msg.sentence.capacity = 82 + 1;  // 82 is the maximum length of NMEA sentences, +1 for null terminator
+#endif
 
     uint32_t last_status_print_ms = 0;
 
@@ -692,6 +957,12 @@ void Rover::gnssReceiveTask(void *arg) {
 
 #if ROVER_ENABLE_NMEA_PUBLISHER
                 const NmeaSentenceType sentence_type = classifyNmeaSentence(line);
+#if ROVER_GNSS_TRANSPORT_MODE == ROVER_GNSS_TRANSPORT_STRUCTURED_FIX
+                if (sentence_type == NmeaSentenceType::Rmc) {
+                    (void)parseRmcDate(line, self->latest_rmc_date);
+                }
+#endif
+#if ROVER_GNSS_TRANSPORT_MODE == ROVER_GNSS_TRANSPORT_RAW_NMEA
                 if (line.length() <= MAX_NMEA_SENTENCE_LEN &&
                     sentence_type != NmeaSentenceType::None &&
                     shouldForwardNmeaSentence(line) &&
@@ -708,6 +979,19 @@ void Rover::gnssReceiveTask(void *arg) {
                     slot->data[slot->len] = '\0';
                     taskEXIT_CRITICAL(&self->nmea_publish_mux);
                 }
+#elif ROVER_GNSS_TRANSPORT_MODE == ROVER_GNSS_TRANSPORT_STRUCTURED_FIX
+                if (sentence_type == NmeaSentenceType::Gga &&
+                    self->uros_client.isConnected() &&
+                    self->gnss_fix_publisher_initialized) {
+                    LatestGnssFix fix{};
+                    if (parseGgaFix(line, self->latest_rmc_date, fix)) {
+                        fix.pending = true;
+                        taskENTER_CRITICAL(&self->nmea_publish_mux);
+                        self->latest_gnss_fix = fix;
+                        taskEXIT_CRITICAL(&self->nmea_publish_mux);
+                    }
+                }
+#endif
 #endif
                 break;
             }

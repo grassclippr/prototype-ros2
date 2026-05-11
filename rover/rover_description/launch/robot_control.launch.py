@@ -50,6 +50,12 @@ declare_joy_device_name_arg = DeclareLaunchArgument(
     description="Optional joystick device name to match exactly"
 )
 joy_device_name = LaunchConfiguration("joy_device_name")
+declare_gnss_transport_arg = DeclareLaunchArgument(
+    name="gnss_transport",
+    default_value="structured_fix",
+    description="GNSS transport mode: raw_nmea or structured_fix"
+)
+gnss_transport = LaunchConfiguration("gnss_transport")
 
 xacro_file = PathJoinSubstitution([
     FindPackageShare(PACKAGE_NAME),
@@ -96,6 +102,7 @@ def generate_launch_description():
         declare_joy_dev_arg,
         declare_joy_device_id_arg,
         declare_joy_device_name_arg,
+        declare_gnss_transport_arg,
 
         # robot_state_publisher with xacro-based URDF
         Node(
@@ -183,13 +190,27 @@ def generate_launch_description():
                 'output_topic': '/nmea_sentence',
                 'default_frame_id': 'gps',
             }],
-            condition=IfCondition(PythonExpression(["'", mode, "' == 'hw'"]))
+            condition=IfCondition(PythonExpression(["'", mode, "' == 'hw' and '", gnss_transport, "' == 'raw_nmea'"]))
         ),
 
         Node(
             package='nmea_navsat_driver',
             executable='nmea_topic_driver',
             remappings=[('nmea_sentence', '/nmea_sentence')],
-            condition=IfCondition(PythonExpression(["'", mode, "' == 'hw'"]))
+            condition=IfCondition(PythonExpression(["'", mode, "' == 'hw' and '", gnss_transport, "' == 'raw_nmea'"]))
+        ),
+
+        Node(
+            package='rover_navigation',
+            executable='gnss_fix_bridge.py',
+            name='gnss_fix_bridge',
+            output='screen',
+            parameters=[{
+                'input_topic': '/baseboard/gnss_fix',
+                'fix_topic': '/fix',
+                'time_reference_topic': '/time_reference',
+                'frame_id': 'gps',
+            }],
+            condition=IfCondition(PythonExpression(["'", mode, "' == 'hw' and '", gnss_transport, "' == 'structured_fix'"]))
         )
     ])

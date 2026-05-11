@@ -6,6 +6,7 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/EncoderState.msg"
+  "msg/GnssFix.msg"
   "msg/MotorCommand.msg"
   "msg/SafetyState.msg"
 )

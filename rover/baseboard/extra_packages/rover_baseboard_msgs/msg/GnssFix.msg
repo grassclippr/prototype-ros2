@@ -1,0 +1,13 @@
+uint16 utc_year
+uint8 utc_month
+uint8 utc_day
+uint8 utc_hour
+uint8 utc_minute
+float32 utc_second
+bool utc_valid
+float64 latitude_deg
+float64 longitude_deg
+float64 altitude_m
+float32 hdop
+uint8 satellites
+uint8 fix_quality
