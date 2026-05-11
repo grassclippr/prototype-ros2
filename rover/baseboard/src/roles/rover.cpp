@@ -98,6 +98,16 @@ bool readNmeaLine(HardwareSerial &serial, String &line, uint32_t timeout_ms) {
     }
 }
 
+bool shouldForwardNmeaSentence(const String &line) {
+    // Keep the initial GNSS bridge focused on the minimum sentences needed for
+    // navigation bring-up. Extra chatter such as GSV/GSA can overload the shared
+    // micro-ROS transport without improving the core fix path.
+    return line.startsWith("$GNGGA") ||
+           line.startsWith("$GPGGA") ||
+           line.startsWith("$GNRMC") ||
+           line.startsWith("$GPRMC");
+}
+
 bool publishWithReconnect(
     rcl_publisher_t *publisher,
     const void *ros_message,
@@ -584,10 +594,12 @@ void Rover::gnssReceiveTask(void *arg) {
     // dropped bytes while this task is publishing prior sentences.
     Serial2.setRxBufferSize(GNSS_UART_RX_BUFFER_SIZE);
     Serial2.begin(460800, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
-    // Serial2.print("$PQTMCFGMSGRATE,W,GGA,1,1*58\r\n");
-    // Serial2.print("$PAIR062,0,1*3F\r\n");
     self->sendNmeaCommand("PQTMCFGRCVRMODE,W,1"); // Set receiver to rover mode (accept RTCM corrections)
     delay(100);
+    self->sendNmeaCommand("PQTMCFGMSGRATE,W,GGA,1,1"); // Ensure fix/altitude updates are available.
+    delay(30);
+    self->sendNmeaCommand("PQTMCFGMSGRATE,W,RMC,1,1"); // Ensure position/time/course updates are available.
+    delay(30);
     self->sendNmeaCommand("PAIR062,0,1");
     delay(30);
     self->sendNmeaCommand("QTMSAVEPAR"); // Save settings to non-volatile memory, so they persist after reboot
@@ -665,6 +677,7 @@ void Rover::gnssReceiveTask(void *arg) {
 
 #if ROVER_ENABLE_NMEA_PUBLISHER
                 if (line.length() <= MAX_NMEA_SENTENCE_LEN &&
+                    shouldForwardNmeaSentence(line) &&
                     self->uros_client.isConnected() &&
                     self->nmea_publisher_initialized &&
                     self->nmea_publish_queue != nullptr) {

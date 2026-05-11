@@ -53,21 +53,34 @@ cleanup() {
 trap cleanup EXIT
 
 ros_env='source /opt/ros/jazzy/setup.bash && source /root/ros2_ws/install/setup.bash'
-
-podman exec core bash -lc "${ros_env} && ros2 topic list -t" >"${topic_list_log}"
 required_topics=(
   '/baseboard/motor_command '
   '/baseboard/encoder_state '
   '/diff_drive_controller/cmd_vel '
   '/diff_drive_controller/cmd_vel_out '
 )
-for topic in "${required_topics[@]}"; do
-  if ! grep -Fq "${topic}" "${topic_list_log}"; then
-    echo "error: required topic missing: ${topic% }" >&2
-    cat "${topic_list_log}" >&2
-    exit 1
+
+topics_ready=0
+for _ in $(seq 1 15); do
+  podman exec core bash -lc "${ros_env} && ros2 topic list -t" >"${topic_list_log}"
+  topics_ready=1
+  for topic in "${required_topics[@]}"; do
+    if ! grep -Fq "${topic}" "${topic_list_log}"; then
+      topics_ready=0
+      break
+    fi
+  done
+  if [ "${topics_ready}" -eq 1 ]; then
+    break
   fi
+  sleep 1
 done
+
+if [ "${topics_ready}" -ne 1 ]; then
+  echo "error: required topics did not become ready" >&2
+  cat "${topic_list_log}" >&2
+  exit 1
+fi
 
 podman exec core bash -lc "${ros_env} && timeout ${OBSERVE_MOTOR_SEC} ros2 topic echo /baseboard/motor_command --qos-reliability best_effort --qos-depth 1" >"${motor_log}" 2>&1 &
 motor_pid=$!
