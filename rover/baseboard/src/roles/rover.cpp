@@ -5,8 +5,6 @@
 #include <cmath>
 
 #include <rmw/qos_profiles.h>
-#include <rosidl_runtime_c/string_functions.h>
-
 #include "./espnow.h"
 
 #ifndef SERIAL_MUX_HEARTBEAT
@@ -108,6 +106,22 @@ bool shouldForwardNmeaSentence(const String &line) {
            line.startsWith("$GPRMC");
 }
 
+enum class NmeaSentenceType {
+    None,
+    Gga,
+    Rmc,
+};
+
+NmeaSentenceType classifyNmeaSentence(const String &line) {
+    if (line.startsWith("$GNGGA") || line.startsWith("$GPGGA")) {
+        return NmeaSentenceType::Gga;
+    }
+    if (line.startsWith("$GNRMC") || line.startsWith("$GPRMC")) {
+        return NmeaSentenceType::Rmc;
+    }
+    return NmeaSentenceType::None;
+}
+
 bool publishWithReconnect(
     rcl_publisher_t *publisher,
     const void *ros_message,
@@ -154,7 +168,6 @@ bool publishWithReconnect(
 
 Rover::Rover() {
     selfRover = this;
-    nmea_publish_queue = xQueueCreate(16, sizeof(PendingNmeaSentence));
 
     USBSerial.begin(921600);
     leds.setup();
@@ -244,10 +257,6 @@ Rover::Rover() {
             return false;
         }
         nmea_publisher_initialized = true;
-        if (!rosidl_runtime_c__String__assign(&nmea_msg.header.frame_id, "gps")) {
-            printf("Failed to assign NMEA frame_id\n");
-            return false;
-        }
 
         nmea_publish_timer = rcl_get_zero_initialized_timer();
         rc = rclc_timer_init_default2(
@@ -257,12 +266,18 @@ Rover::Rover() {
             [](rcl_timer_t *timer, int64_t last_call_time) {
                 (void)timer;
                 (void)last_call_time;
-                if (selfRover->nmea_publish_queue == nullptr) {
-                    return;
+                LatestNmeaSentence pending{};
+                taskENTER_CRITICAL(&selfRover->nmea_publish_mux);
+                if (selfRover->latest_gga_sentence.pending) {
+                    pending = selfRover->latest_gga_sentence;
+                    selfRover->latest_gga_sentence.pending = false;
+                } else if (selfRover->latest_rmc_sentence.pending) {
+                    pending = selfRover->latest_rmc_sentence;
+                    selfRover->latest_rmc_sentence.pending = false;
                 }
+                taskEXIT_CRITICAL(&selfRover->nmea_publish_mux);
 
-                PendingNmeaSentence pending{};
-                if (xQueueReceive(selfRover->nmea_publish_queue, &pending, 0) != pdTRUE) {
+                if (!pending.pending) {
                     return;
                 }
 
@@ -676,20 +691,22 @@ void Rover::gnssReceiveTask(void *arg) {
                 }
 
 #if ROVER_ENABLE_NMEA_PUBLISHER
+                const NmeaSentenceType sentence_type = classifyNmeaSentence(line);
                 if (line.length() <= MAX_NMEA_SENTENCE_LEN &&
+                    sentence_type != NmeaSentenceType::None &&
                     shouldForwardNmeaSentence(line) &&
                     self->uros_client.isConnected() &&
-                    self->nmea_publisher_initialized &&
-                    self->nmea_publish_queue != nullptr) {
-                    PendingNmeaSentence pending{};
-                    pending.len = line.length();
-                    memcpy(pending.data, line.c_str(), pending.len);
-                    pending.data[pending.len] = '\0';
-                    if (xQueueSend(self->nmea_publish_queue, &pending, 0) != pdTRUE) {
-                        PendingNmeaSentence dropped{};
-                        (void)xQueueReceive(self->nmea_publish_queue, &dropped, 0);
-                        (void)xQueueSend(self->nmea_publish_queue, &pending, 0);
-                    }
+                    self->nmea_publisher_initialized) {
+                    taskENTER_CRITICAL(&self->nmea_publish_mux);
+                    LatestNmeaSentence *slot =
+                        sentence_type == NmeaSentenceType::Gga
+                            ? &self->latest_gga_sentence
+                            : &self->latest_rmc_sentence;
+                    slot->pending = true;
+                    slot->len = line.length();
+                    memcpy(slot->data, line.c_str(), slot->len);
+                    slot->data[slot->len] = '\0';
+                    taskEXIT_CRITICAL(&self->nmea_publish_mux);
                 }
 #endif
                 break;
